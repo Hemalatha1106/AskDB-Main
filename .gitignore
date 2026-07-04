@@ -1,0 +1,58 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env*
+
+# Node / Next.js
+node_modules/
+ask-db-frontend/node_modules/
+.next/
+ask-db-frontend/.next/
+out/
+ask-db-frontend/out/
+build/
+dist/
+.pnpm-debug.log*
+
+# Database & Storage
+*.sqlite
+*.db
+system_db.sqlite
+vector_store/
+data/schema_conn_*.json
+data/schema.json
+
+# IDEs & System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

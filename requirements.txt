@@ -1,0 +1,11 @@
+google-generativeai
+sentence-transformers
+faiss-cpu
+sqlalchemy
+psycopg2-binary
+pymysql
+pandas
+matplotlib
+seaborn
+fastapi
+uvicorn

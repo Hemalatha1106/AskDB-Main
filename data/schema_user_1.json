@@ -1,0 +1,71 @@
+[
+  {
+    "table": "customers",
+    "description": "Stores information for customers.",
+    "columns": [
+      {
+        "name": "customer_id",
+        "type": "INTEGER",
+        "key": "PRIMARY KEY"
+      },
+      {
+        "name": "customer_name",
+        "type": "VARCHAR(100)"
+      },
+      {
+        "name": "city",
+        "type": "VARCHAR(50)"
+      }
+    ]
+  },
+  {
+    "table": "employees",
+    "description": "Stores information for employees.",
+    "columns": [
+      {
+        "name": "emp_id",
+        "type": "INTEGER"
+      },
+      {
+        "name": "emp_name",
+        "type": "VARCHAR(50)"
+      },
+      {
+        "name": "ph_number",
+        "type": "VARCHAR(10)"
+      },
+      {
+        "name": "email",
+        "type": "VARCHAR(100)"
+      }
+    ]
+  },
+  {
+    "table": "orders",
+    "description": "Stores information for orders.",
+    "columns": [
+      {
+        "name": "order_id",
+        "type": "INTEGER",
+        "key": "PRIMARY KEY"
+      },
+      {
+        "name": "customer_id",
+        "type": "INTEGER",
+        "key": "FOREIGN KEY"
+      },
+      {
+        "name": "product",
+        "type": "VARCHAR(50)"
+      },
+      {
+        "name": "quantity",
+        "type": "INTEGER"
+      },
+      {
+        "name": "price",
+        "type": "DECIMAL(8, 2)"
+      }
+    ]
+  }
+]
