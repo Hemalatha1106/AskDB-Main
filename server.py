@@ -259,21 +259,59 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
         raise HTTPException(status_code=400, detail="Query cannot be empty")
         
     try:
+        # 1.5 Conversation Memory & Context resolution
+        resolved_query = query
+        if request.chat_id:
+            from app.conversation import get_memory, update_memory_after_query, ContextResolver
+            
+            memory = get_memory(request.chat_id)
+            resolver = ContextResolver()
+            resolved_query = resolver.resolve(query, memory)
+            print(f"DEBUG: Raw Query: {query} -> Resolved Standalone Query: {resolved_query}")
+            
+            # Check for ambiguous pronoun clarification request
+            if resolved_query.startswith("I couldn't determine"):
+                if user_id:
+                    save_message(str(uuid.uuid4()), request.chat_id, "user", query)
+                    save_message(str(uuid.uuid4()), request.chat_id, "assistant", resolved_query)
+                return QueryResponse(
+                    success=True,
+                    sql="",
+                    answer=resolved_query,
+                    columns=[],
+                    rows=[],
+                    plot=""
+                )
+
         # 2. Retrieve schemas using connection-specific RAG index
         retriever = Retriever(connection_id=connection_id)
-        schemas = retriever.retrieve(query, k=15)
+        schemas = retriever.retrieve(resolved_query, k=15)
         if not schemas:
             return QueryResponse(success=False, error="No table schemas retrieved. Please connect/index your database first.")
             
         # 3. Build prompt
         builder = PromptBuilder(dialect=dialect_display)
-        prompt_data = builder.build_prompt(query, schemas)
+        prompt_data = builder.build_prompt(resolved_query, schemas)
         
         # 4. Generate SQL query
         generator = SQLGenerator()
         sql = generator.generate_sql(prompt_data)
         
         if sql.startswith("-- ERROR:"):
+            # Update memory even if prompt builder fails to find schema
+            if request.chat_id:
+                update_memory_after_query(
+                    chat_id=request.chat_id,
+                    query=query,
+                    resolved_query=resolved_query,
+                    sql="",
+                    columns=[],
+                    rows=[],
+                    answer="I couldn't find that information in your connected database."
+                )
+            if request.chat_id and user_id:
+                save_message(str(uuid.uuid4()), request.chat_id, "user", query)
+                save_message(str(uuid.uuid4()), request.chat_id, "assistant", "I couldn't find that information in your connected database.", sql_query=sql)
             return QueryResponse(
                 success=False,
                 sql=sql,
@@ -289,7 +327,7 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
             
         # 6. Synthesize final response
         synthesizer = ResponseSynthesizer()
-        answer = synthesizer.synthesize(query, sql, result["columns"], result["rows"])
+        answer = synthesizer.synthesize(resolved_query, sql, result["columns"], result["rows"])
         
         # 7. Check and generate visualization
         visualizer = DataVisualizer()
@@ -301,7 +339,7 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
                 pass
             
         plot_success = visualizer.generate_and_save_plot(
-            query, sql, result["columns"], result["rows"], output_filename
+            resolved_query, sql, result["columns"], result["rows"], output_filename
         )
         
         plot_base64 = ""
@@ -309,6 +347,18 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
             with open(output_filename, "rb") as image_file:
                 plot_base64 = base64.b64encode(image_file.read()).decode("utf-8")
                 
+        # 7.5 Update Memory
+        if request.chat_id:
+            update_memory_after_query(
+                chat_id=request.chat_id,
+                query=query,
+                resolved_query=resolved_query,
+                sql=sql,
+                columns=result["columns"],
+                rows=result["rows"],
+                answer=answer
+            )
+
         # 8. Log message history in System DB if chat_id is active
         if request.chat_id and user_id:
             save_message(str(uuid.uuid4()), request.chat_id, "user", query)

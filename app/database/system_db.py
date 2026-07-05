@@ -19,11 +19,23 @@ def init_db():
             print("Auto-migration: Dropping old user_connections table to upgrade schema...")
             with engine.begin() as conn:
                 conn.execute(text("DROP TABLE IF EXISTS user_connections"))
+                
+    # Auto-migration: Check if column 'plot' in messages table needs to be LONGTEXT (mysql)
+    if "messages" in inspector.get_table_names():
+        columns = inspector.get_columns("messages")
+        plot_col = next((c for c in columns if c["name"] == "plot"), None)
+        if plot_col and dialect == "mysql":
+            col_type = str(plot_col["type"]).upper()
+            if "LONGTEXT" not in col_type:
+                print("Auto-migration: Altering messages.plot column to LONGTEXT...")
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE messages MODIFY COLUMN plot LONGTEXT"))
     
     # Dialect-specific types and syntax
     pk_type = "INTEGER PRIMARY KEY AUTOINCREMENT" if dialect == "sqlite" else "INT AUTO_INCREMENT PRIMARY KEY"
     ts_type = "DATETIME DEFAULT CURRENT_TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     text_type = "TEXT"
+    plot_type = "TEXT" if dialect == "sqlite" else "LONGTEXT"
     
     with engine.begin() as conn:
         # Create users table
@@ -82,7 +94,7 @@ def init_db():
             role VARCHAR(20) NOT NULL,
             content {text_type} NOT NULL,
             sql_query {text_type},
-            plot {text_type},
+            plot {plot_type},
             timestamp VARCHAR(50) NOT NULL
         )
         """))
