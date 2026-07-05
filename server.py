@@ -32,7 +32,10 @@ from app.database.system_db import (
     create_chat,
     get_user_chats,
     save_message,
-    get_chat_messages
+    get_chat_messages,
+    save_report,
+    list_reports,
+    delete_report
 )
 
 app = FastAPI(title="AskDB API", description="AI-powered SQL query assistant API with Multi-Connection Isolation")
@@ -72,6 +75,10 @@ class CreateChatRequest(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     chat_id: Optional[str] = None
+
+class SaveReportRequest(BaseModel):
+    message_id: str
+    title: Optional[str] = None
 
 class QueryResponse(BaseModel):
     success: bool
@@ -225,6 +232,40 @@ def init_chat(req: CreateChatRequest, user = Depends(get_current_user)):
 def chat_messages(chat_id: str, user = Depends(get_current_user)):
     messages = get_chat_messages(chat_id)
     return {"success": True, "messages": messages}
+
+# --- Saved Reports Routes ---
+
+@app.post("/api/reports")
+def api_save_report(req: SaveReportRequest, user = Depends(get_current_user)):
+    try:
+        report_id = save_report(user["id"], req.message_id, req.title)
+        return {"success": True, "report_id": report_id}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/reports")
+def api_list_reports(user = Depends(get_current_user)):
+    try:
+        reports = list_reports(user["id"])
+        return {"success": True, "reports": reports}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/reports/{report_id}")
+def api_delete_report(report_id: str, user = Depends(get_current_user)):
+    try:
+        success = delete_report(user["id"], report_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Report not found or not owned by user.")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- SQL Assistant Query Route ---
 

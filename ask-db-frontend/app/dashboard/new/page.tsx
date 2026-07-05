@@ -164,6 +164,7 @@ export default function NewChatPage() {
               sql={msg.sql}
               plot={msg.plot}
               timestamp={msg.timestamp}
+              messageId={msg.id}
             />
           ))}
           {loading && (

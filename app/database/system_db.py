@@ -98,6 +98,22 @@ def init_db():
             timestamp VARCHAR(50) NOT NULL
         )
         """))
+        
+        # Create reports table
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS reports (
+            id VARCHAR(64) PRIMARY KEY,
+            user_id INT NOT NULL,
+            chat_id VARCHAR(64),
+            message_id VARCHAR(64),
+            title VARCHAR(255) NOT NULL,
+            query {text_type},
+            sql_query {text_type},
+            answer {text_type},
+            plot {plot_type},
+            created_at {ts_type}
+        )
+        """))
 
 def hash_password(password: str, salt: str = None) -> tuple[str, str]:
     if salt is None:
@@ -435,3 +451,104 @@ def get_chat_messages(chat_id: str) -> list:
                 "timestamp": r[5]
             })
         return messages
+
+def save_report(user_id: int, message_id: str, title: str = None) -> str:
+    import uuid
+    init_db()
+    engine = get_engine()
+    
+    with engine.connect() as conn:
+        # Fetch the assistant message details
+        msg = conn.execute(
+            text("SELECT chat_id, content, sql_query, plot FROM messages WHERE id = :msg_id AND role = 'assistant'"),
+            {"msg_id": message_id}
+        ).fetchone()
+        
+        if not msg:
+            raise ValueError("Message not found or is not an assistant message")
+            
+        chat_id, content, sql_query, plot = msg
+        
+        # Verify chat belongs to this user
+        chat_owner = conn.execute(
+            text("SELECT user_id FROM chats WHERE id = :chat_id"),
+            {"chat_id": chat_id}
+        ).fetchone()
+        
+        if not chat_owner or chat_owner[0] != user_id:
+            raise PermissionError("Access denied: You do not own this chat session.")
+            
+        # Get preceding user query (the latest user message in the same chat)
+        user_query_row = conn.execute(
+            text("SELECT content FROM messages WHERE chat_id = :chat_id AND role = 'user' ORDER BY timestamp DESC LIMIT 1"),
+            {"chat_id": chat_id}
+        ).fetchone()
+        
+        user_query = user_query_row[0] if user_query_row else "Query"
+        
+        if not title:
+            # Default title to first 50 chars of the user query
+            title = user_query[:50] + "..." if len(user_query) > 50 else user_query
+            if not title.strip():
+                title = "Query Analysis Report"
+                
+    report_id = str(uuid.uuid4())
+    
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO reports (id, user_id, chat_id, message_id, title, query, sql_query, answer, plot)
+            VALUES (:id, :user_id, :chat_id, :message_id, :title, :query, :sql_query, :answer, :plot)
+            """),
+            {
+                "id": report_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "title": title,
+                "query": user_query,
+                "sql_query": sql_query,
+                "answer": content,
+                "plot": plot
+            }
+        )
+    return report_id
+
+def list_reports(user_id: int) -> list:
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, chat_id, message_id, title, query, sql_query, answer, plot, created_at FROM reports WHERE user_id = :user_id ORDER BY created_at DESC"),
+            {"user_id": user_id}
+        ).fetchall()
+        
+        reports = []
+        for r in rows:
+            created_at = r[8]
+            if isinstance(created_at, str):
+                created_at = created_at.split(".")[0]
+            else:
+                created_at = created_at.strftime("%Y-%m-%d %H:%M:%S")
+            reports.append({
+                "id": r[0],
+                "chat_id": r[1],
+                "message_id": r[2],
+                "title": r[3],
+                "query": r[4],
+                "sql_query": r[5],
+                "answer": r[6],
+                "plot": r[7] if r[7] else None,
+                "created_at": created_at
+            })
+        return reports
+
+def delete_report(user_id: int, report_id: str) -> bool:
+    init_db()
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("DELETE FROM reports WHERE id = :id AND user_id = :user_id"),
+            {"id": report_id, "user_id": user_id}
+        )
+        return result.rowcount > 0

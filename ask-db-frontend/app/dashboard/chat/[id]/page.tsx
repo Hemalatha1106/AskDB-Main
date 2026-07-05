@@ -174,6 +174,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
                 sql={msg.sql}
                 plot={msg.plot}
                 timestamp={msg.timestamp}
+                messageId={msg.id}
               />
             ))
           )}

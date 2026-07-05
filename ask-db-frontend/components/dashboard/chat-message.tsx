@@ -22,9 +22,10 @@ interface ChatMessageProps {
   sql?: string;
   plot?: string;
   timestamp?: string;
+  messageId?: string;
 }
 
-export function ChatMessage({ role, content, sql, plot, timestamp }: ChatMessageProps) {
+export function ChatMessage({ role, content, sql, plot, timestamp, messageId }: ChatMessageProps) {
   const [showExplanation, setShowExplanation] = useState(false);
   const [explaining, setExplaining] = useState(false);
   const [explanation, setExplanation] = useState('');
@@ -65,8 +66,35 @@ export function ChatMessage({ role, content, sql, plot, timestamp }: ChatMessage
     alert("Generating premium analytics PDF report...");
   };
 
-  const handleSaveReport = () => {
-    alert("Successfully saved this query analysis to Saved Reports!");
+  const handleSaveReport = async () => {
+    if (!messageId) {
+      alert("Error: Message ID is missing.");
+      return;
+    }
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      alert("Error: You must be logged in to save reports.");
+      return;
+    }
+    try {
+      const response = await fetch('http://localhost:8000/api/reports', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ message_id: messageId }),
+      });
+      if (response.ok) {
+        alert("Successfully saved this query analysis to Saved Reports!");
+      } else {
+        const errData = await response.json();
+        alert(`Failed to save report: ${errData.detail || "Server error"}`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert(`Error saving report: ${e.message}`);
+    }
   };
 
   return (
