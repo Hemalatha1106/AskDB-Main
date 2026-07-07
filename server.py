@@ -35,8 +35,18 @@ from app.database.system_db import (
     get_chat_messages,
     save_report,
     list_reports,
-    delete_report
+    delete_report,
+    get_user_ai_settings,
+    save_user_ai_settings,
+    delete_user_ai_settings
 )
+from app.llm.providers import (
+    encrypt_key,
+    decrypt_key,
+    InvalidAPIKeyError,
+    ModelUnavailableError
+)
+
 
 app = FastAPI(title="AskDB API", description="AI-powered SQL query assistant API with Multi-Connection Isolation")
 
@@ -48,6 +58,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def startup_db_init():
+    init_db()
 
 # --- Request/Response Models ---
 
@@ -80,13 +94,21 @@ class SaveReportRequest(BaseModel):
     message_id: str
     title: Optional[str] = None
 
+class AISettingsRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    model: str
+    use_personal_key: bool
+
 class QueryResponse(BaseModel):
+
     success: bool
     sql: str = ""
     answer: str = ""
     columns: list = []
     rows: list = []
     plot: str = ""  # Base64 encoded image string
+    message_id: str = ""  # UUID of the saved assistant message
     error: str = ""
 
 # --- Authentication Dependency ---
@@ -307,7 +329,7 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
             
             memory = get_memory(request.chat_id)
             resolver = ContextResolver()
-            resolved_query = resolver.resolve(query, memory)
+            resolved_query = resolver.resolve(query, memory, user_id=user_id)
             print(f"DEBUG: Raw Query: {query} -> Resolved Standalone Query: {resolved_query}")
             
             # Check for ambiguous pronoun clarification request
@@ -336,7 +358,7 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
         
         # 4. Generate SQL query
         generator = SQLGenerator()
-        sql = generator.generate_sql(prompt_data)
+        sql = generator.generate_sql(prompt_data, user_id=user_id)
         
         if sql.startswith("-- ERROR:"):
             # Update memory even if prompt builder fails to find schema
@@ -348,7 +370,8 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
                     sql="",
                     columns=[],
                     rows=[],
-                    answer="I couldn't find that information in your connected database."
+                    answer="I couldn't find that information in your connected database.",
+                    user_id=user_id
                 )
             if request.chat_id and user_id:
                 save_message(str(uuid.uuid4()), request.chat_id, "user", query)
@@ -368,11 +391,12 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
             
         # 6. Synthesize final response
         synthesizer = ResponseSynthesizer()
-        answer = synthesizer.synthesize(resolved_query, sql, result["columns"], result["rows"])
+        answer = synthesizer.synthesize(resolved_query, sql, result["columns"], result["rows"], user_id=user_id)
         
         # 7. Check and generate visualization
         visualizer = DataVisualizer()
-        output_filename = f"query_result_plot_{connection_id or 'default'}.png"
+        import tempfile
+        output_filename = os.path.join(tempfile.gettempdir(), f"query_result_plot_{connection_id or 'default'}.png")
         if os.path.exists(output_filename):
             try:
                 os.remove(output_filename)
@@ -380,13 +404,17 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
                 pass
             
         plot_success = visualizer.generate_and_save_plot(
-            resolved_query, sql, result["columns"], result["rows"], output_filename
+            resolved_query, sql, result["columns"], result["rows"], output_filename, user_id=user_id
         )
         
         plot_base64 = ""
         if plot_success and os.path.exists(output_filename):
             with open(output_filename, "rb") as image_file:
                 plot_base64 = base64.b64encode(image_file.read()).decode("utf-8")
+            try:
+                os.remove(output_filename)
+            except:
+                pass
                 
         # 7.5 Update Memory
         if request.chat_id:
@@ -397,13 +425,16 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
                 sql=sql,
                 columns=result["columns"],
                 rows=result["rows"],
-                answer=answer
+                answer=answer,
+                user_id=user_id
             )
 
+        assistant_msg_id = ""
         # 8. Log message history in System DB if chat_id is active
         if request.chat_id and user_id:
+            assistant_msg_id = str(uuid.uuid4())
             save_message(str(uuid.uuid4()), request.chat_id, "user", query)
-            save_message(str(uuid.uuid4()), request.chat_id, "assistant", answer, sql_query=sql, plot=plot_base64)
+            save_message(assistant_msg_id, request.chat_id, "assistant", answer, sql_query=sql, plot=plot_base64)
             
         return QueryResponse(
             success=True,
@@ -411,7 +442,18 @@ def execute_query(request: QueryRequest, authorization: Optional[str] = Header(N
             answer=answer,
             columns=result["columns"],
             rows=result["rows"],
-            plot=plot_base64
+            plot=plot_base64,
+            message_id=assistant_msg_id
+        )
+    except InvalidAPIKeyError as e:
+        return QueryResponse(
+            success=False,
+            error=f"Your personal API key is invalid or unauthorized.\n\nError: {str(e)}\n\nPlease check your key in Workspace Settings or disable 'Use my API key' to switch back to AskDB default AI."
+        )
+    except ModelUnavailableError as e:
+        return QueryResponse(
+            success=False,
+            error=f"The selected model is currently unavailable.\n\nError: {str(e)}\n\nPlease check your model settings in Workspace Settings."
         )
     except Exception as e:
         return QueryResponse(success=False, error=str(e))
@@ -706,8 +748,62 @@ def get_dashboard_charts_data(user = Depends(get_current_user)):
         "charts": charts
     }
 
+# --- AI Settings Routes ---
+
+@app.get("/api/settings/ai")
+def get_ai_settings(user = Depends(get_current_user)):
+    settings = get_user_ai_settings(user["id"])
+    if not settings:
+        return {
+            "success": True,
+            "settings": {
+                "provider": "gemini",
+                "model": "gemini-3.5-flash",
+                "use_personal_key": False,
+                "has_key": False
+            }
+        }
+    
+    return {
+        "success": True,
+        "settings": {
+            "provider": settings.get("provider", "gemini"),
+            "model": settings.get("model", "gemini-3.5-flash"),
+            "use_personal_key": settings.get("use_personal_key", False),
+            "has_key": bool(settings.get("encrypted_api_key"))
+        }
+    }
+
+@app.post("/api/settings/ai")
+def save_ai_settings(req: AISettingsRequest, user = Depends(get_current_user)):
+    current_settings = get_user_ai_settings(user["id"])
+    encrypted_key = None
+    
+    if req.api_key:
+        encrypted_key = encrypt_key(req.api_key)
+    elif current_settings:
+        encrypted_key = current_settings.get("encrypted_api_key")
+        
+    if req.use_personal_key and not encrypted_key:
+        raise HTTPException(status_code=400, detail="API key is required when 'Use my API key' is enabled.")
+        
+    save_user_ai_settings(
+        user_id=user["id"],
+        provider=req.provider,
+        encrypted_key=encrypted_key or "",
+        model=req.model,
+        use_personal_key=req.use_personal_key
+    )
+    return {"success": True}
+
+@app.delete("/api/settings/ai")
+def delete_ai_settings(user = Depends(get_current_user)):
+    delete_user_ai_settings(user["id"])
+    return {"success": True}
+
 if __name__ == "__main__":
+
     import uvicorn
     # Make sure we init tables on startup
     init_db()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

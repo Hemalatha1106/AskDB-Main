@@ -1,23 +1,16 @@
 import os
 import json
 from typing import List, Dict, Any
-import google.generativeai as genai
 from app.utils.helper import load_env
 from app.conversation.models import ConversationMemory, _normalize_val
+from app.llm.providers import get_user_provider
 
 class ContextResolver:
     def __init__(self, model_name="gemini-3.5-flash"):
         load_env()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY environment variable is not set. "
-                "Please add it to your .env file."
-            )
-        genai.configure(api_key=api_key)
         self.model_name = model_name
 
-    def resolve(self, query: str, memory: ConversationMemory) -> str:
+    def resolve(self, query: str, memory: ConversationMemory, user_id: int = None) -> str:
         """
         Resolves ambiguous pronouns and follow-up references in the user's question,
         returning a self-contained question, or a clarification request if ambiguous.
@@ -36,7 +29,9 @@ class ContextResolver:
             "Rules:\n"
             "1. Output ONLY the resolved standalone question or the clarification request. Do not include any intros, markdown code blocks, or explanations.\n"
             "2. Ensure the resolved question is clear, grammatical, and fully self-contained so that a Text-to-SQL system can convert it directly to SQL.\n"
-            "3. If the user's question is already self-contained and clear, output the original question exactly."
+            "3. If the user's question is already self-contained and clear, output the original question exactly.\n"
+            "4. If the user is requesting a visualization, chart, plot, or graph of the previous results (e.g. 'show as piechart', 'plot this data', 'i want a bar chart of this'), rewrite it into a self-contained query that requests the same data as before but explicitly specifies the target visualization (e.g. 'Which departments contribute the highest percentage of the company\'s payroll? Needs: Pie Chart').\n"
+            "5. Do NOT treat chart formatting expressions (e.g. 'as bar chart', 'as a pie chart', 'in a line graph') as ambiguous context references or pronouns. They are simply requests for the output format of the current query."
         )
 
         prompt = (
@@ -54,30 +49,15 @@ class ContextResolver:
             f"Resolved Standalone Question:"
         )
 
-        models = [self.model_name, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.1-flash-lite']
-        models = list(dict.fromkeys(models))
-        
-        last_error = None
-        for m_name in models:
-            try:
-                model = genai.GenerativeModel(
-                    model_name=m_name,
-                    system_instruction=system_instruction
-                )
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.0  # Keep it deterministic
-                    )
-                )
-                return response.text.strip()
-            except Exception as e:
-                print(f"Warning: Context resolution failed with model {m_name} ({e}). Trying fallback...")
-                last_error = e
-                
-        raise last_error
+        provider = get_user_provider(user_id, self.model_name)
+        response_text = provider.generate(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=0.0
+        )
+        return response_text.strip()
 
-    def extract_active_entities(self, query: str, sql: str, columns: List[str], rows: List[Any], prev_entities: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_active_entities(self, query: str, sql: str, columns: List[str], rows: List[Any], prev_entities: Dict[str, Any], user_id: int = None) -> Dict[str, Any]:
         """
         Uses Gemini LLM to update the active entities based on the latest query, SQL, and query results.
         """
@@ -122,36 +102,26 @@ class ContextResolver:
             f"Updated Active Entities JSON:"
         )
 
-        models = [self.model_name, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.1-flash-lite']
-        models = list(dict.fromkeys(models))
-        
-        last_error = None
-        for m_name in models:
-            try:
-                model = genai.GenerativeModel(
-                    model_name=m_name,
-                    system_instruction=system_instruction
-                )
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.0
-                    )
-                )
-                res_text = response.text.strip()
-                # Strip markdown blocks if generated
-                if res_text.startswith("```"):
-                    lines = res_text.split("\n")
-                    if lines[0].startswith("```"):
-                        lines = lines[1:]
-                    if lines and lines[-1].startswith("```"):
-                        lines = lines[:-1]
-                    res_text = "\n".join(lines).strip()
-                return json.loads(res_text)
-            except Exception as e:
-                print(f"Warning: Entity extraction failed with model {m_name} ({e}). Trying fallback...")
-                last_error = e
-                
+        provider = get_user_provider(user_id, self.model_name)
+        try:
+            res_text = provider.generate(
+                prompt=prompt,
+                system_instruction=system_instruction,
+                temperature=0.0
+            )
+            res_text = res_text.strip()
+            # Strip markdown blocks if generated
+            if res_text.startswith("```"):
+                lines = res_text.split("\n")
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                res_text = "\n".join(lines).strip()
+            return json.loads(res_text)
+        except Exception as e:
+            print(f"Warning: Entity extraction failed ({e}). Trying fallback...")
+            
         # If all fail, return at least a simple heuristic table name
         import re
         table_name = prev_entities.get("table", "")
@@ -159,3 +129,4 @@ class ContextResolver:
         if from_matches:
             table_name = from_matches[0].strip('`"\'').split('.')[-1]
         return {"table": table_name}
+

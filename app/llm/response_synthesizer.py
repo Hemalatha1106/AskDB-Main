@@ -1,20 +1,13 @@
 import os
-import google.generativeai as genai
 from app.utils.helper import load_env
+from app.llm.providers import get_user_provider
 
 class ResponseSynthesizer:
     def __init__(self, model_name="gemini-3.5-flash"):
         load_env()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY environment variable is not set. "
-                "Please add it to your .env file."
-            )
-        genai.configure(api_key=api_key)
         self.model_name = model_name
 
-    def synthesize(self, query: str, sql: str, columns: list, rows: list) -> str:
+    def synthesize(self, query: str, sql: str, columns: list, rows: list, user_id: int = None) -> str:
         """
         Synthesizes the database results into a natural language response.
         """
@@ -47,32 +40,12 @@ class ResponseSynthesizer:
             f"Natural Language Answer:"
         )
 
-        models = [self.model_name, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.1-flash-lite']
-        # Deduplicate while preserving order
-        models = list(dict.fromkeys(models))
-        
-        last_error = None
-        response_text = None
-        
-        for m_name in models:
-            try:
-                model = genai.GenerativeModel(
-                    model_name=m_name,
-                    system_instruction=system_instruction
-                )
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.3
-                    )
-                )
-                response_text = response.text
-                break
-            except Exception as e:
-                print(f"Warning: Response synthesis failed with model {m_name} ({e}). Trying fallback...")
-                last_error = e
-                
-        if response_text is None:
-            raise last_error
+        provider = get_user_provider(user_id, self.model_name)
+        response_text = provider.generate(
+            prompt=prompt,
+            system_instruction=system_instruction,
+            temperature=0.3
+        )
 
         return response_text.strip()
+

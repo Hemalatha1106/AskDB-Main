@@ -28,8 +28,32 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(collapsed);
   const [conversations, setConversations] = useState<any[]>([]);
   const [dbName, setDbName] = useState<string>('Connect DB');
+  const [aiStatus, setAiStatus] = useState<{ enabled: boolean; provider: string } | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+
+  const fetchAiStatus = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    try {
+      const response = await fetch('http://localhost:8000/api/settings/ai', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.settings) {
+          setAiStatus({
+            enabled: data.settings.use_personal_key && data.settings.has_key,
+            provider: data.settings.provider
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch AI settings status', err);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -76,8 +100,13 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
     };
     
     fetchData();
+    fetchAiStatus();
     window.addEventListener('storage', fetchData);
-    return () => window.removeEventListener('storage', fetchData);
+    window.addEventListener('ai-settings-changed', fetchAiStatus);
+    return () => {
+      window.removeEventListener('storage', fetchData);
+      window.removeEventListener('ai-settings-changed', fetchAiStatus);
+    };
   }, [router]);
 
   const handleLogout = () => {
@@ -85,6 +114,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
     localStorage.removeItem('user');
     router.push('/auth/login');
   };
+
 
   const navItems = [
     { href: '/dashboard', label: 'Home', icon: Home },
@@ -185,6 +215,22 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
 
       {/* Footer Section */}
       <div className="p-3 border-t border-border/40 space-y-1">
+        {/* AI BYOK Status */}
+        {aiStatus && (
+          <div className="px-3 py-2 text-[11px] flex items-center gap-2 border-b border-border/20 mb-1 leading-normal select-none">
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${aiStatus.enabled ? 'bg-emerald-500 animate-pulse' : 'bg-primary'}`} />
+            {!isCollapsed && (
+              <span className="truncate text-muted-foreground font-semibold">
+                {aiStatus.enabled ? (
+                  <span className="text-emerald-500">✓ Personal {aiStatus.provider === 'gemini' ? 'Gemini' : aiStatus.provider.charAt(0).toUpperCase() + aiStatus.provider.slice(1)} key</span>
+                ) : (
+                  <span>✓ AskDB default AI</span>
+                )}
+              </span>
+            )}
+          </div>
+        )}
+
         <Button
           variant="ghost"
           size="sm"
@@ -195,6 +241,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
           {!isCollapsed && <span>Logout</span>}
         </Button>
       </div>
+
     </aside>
   );
 }

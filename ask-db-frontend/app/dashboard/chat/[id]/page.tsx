@@ -116,7 +116,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         setMessages((prev) => [
           ...prev,
           {
-            id: (Date.now() + 1).toString(),
+            id: data.message_id || (Date.now() + 1).toString(),
             role: 'assistant' as const,
             content: data.answer,
             sql: data.sql || undefined,

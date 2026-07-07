@@ -8,11 +8,48 @@ import {
   Shield,
   Cpu,
   Eye,
+  EyeOff,
   Key,
   Trash2,
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Lock,
+  Unlock,
+  Save,
+  Check
 } from 'lucide-react';
+
+const modelsByProvider: Record<string, { id: string; name: string }[]> = {
+  gemini: [
+    { id: 'gemini-3.5-flash', name: 'gemini-3.5-flash (Recommended)' },
+    { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash' },
+    { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro' },
+  ],
+  openai: [
+    { id: 'gpt-4o-mini', name: 'gpt-4o-mini (Recommended)' },
+    { id: 'gpt-4o', name: 'gpt-4o' },
+  ],
+  anthropic: [
+    { id: 'claude-3-5-haiku-latest', name: 'claude-3-5-haiku-latest (Recommended)' },
+    { id: 'claude-3-5-sonnet-latest', name: 'claude-3-5-sonnet-latest' },
+  ],
+  groq: [
+    { id: 'llama-3.3-70b-versatile', name: 'llama-3.3-70b-versatile (Recommended)' },
+    { id: 'llama-3.1-8b-instant', name: 'llama-3.1-8b-instant' },
+    { id: 'mixtral-8x7b-32768', name: 'mixtral-8x7b-32768' },
+  ],
+  fireworks: [
+    { id: 'accounts/fireworks/models/llama-v3p1-405b-instruct', name: 'llama-v3p1-405b' },
+  ],
+};
+
+const providerNames: Record<string, string> = {
+  gemini: 'Google Gemini',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic Claude',
+  groq: 'Groq',
+  fireworks: 'Fireworks AI',
+};
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'profile' | 'model' | 'appearance' | 'api' | 'danger'>('profile');
@@ -20,6 +57,42 @@ export default function SettingsPage() {
   const [userName, setUserName] = useState('Hemalatha');
   const [userEmail, setUserEmail] = useState('hemalatha@example.com');
   const [themeState, setThemeState] = useState('light');
+
+  // AI BYOK Settings
+  const [provider, setProvider] = useState<string>('gemini');
+  const [apiKey, setApiKey] = useState<string>('');
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [selectedAiModel, setSelectedAiModel] = useState<string>('gemini-3.5-flash');
+  const [usePersonalKey, setUsePersonalKey] = useState<boolean>(false);
+  const [hasKey, setHasKey] = useState<boolean>(false);
+  const [loadingAiSettings, setLoadingAiSettings] = useState<boolean>(true);
+  const [savingAiSettings, setSavingAiSettings] = useState<boolean>(false);
+
+  const fetchAiSettings = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    setLoadingAiSettings(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/settings/ai', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.settings) {
+          setProvider(data.settings.provider);
+          setSelectedAiModel(data.settings.model);
+          setUsePersonalKey(data.settings.use_personal_key);
+          setHasKey(data.settings.has_key);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch AI Settings:', e);
+    } finally {
+      setLoadingAiSettings(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -39,6 +112,7 @@ export default function SettingsPage() {
         console.error(e);
       }
     }
+    fetchAiSettings();
   }, []);
 
   const handleThemeChange = (newTheme: string) => {
@@ -54,6 +128,83 @@ export default function SettingsPage() {
     }
   };
 
+  // Adjust model when provider changes
+  useEffect(() => {
+    if (modelsByProvider[provider]) {
+      const belongsToProvider = modelsByProvider[provider].some(m => m.id === selectedAiModel);
+      if (!belongsToProvider) {
+        setSelectedAiModel(modelsByProvider[provider][0].id);
+      }
+    }
+  }, [provider]);
+
+  const handleSaveAiSettings = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    if (usePersonalKey && !apiKey && !hasKey) {
+      alert('Please enter an API Key to enable personal AI routing.');
+      return;
+    }
+
+    setSavingAiSettings(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/settings/ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          provider,
+          api_key: apiKey || null,
+          model: selectedAiModel,
+          use_personal_key: usePersonalKey
+        })
+      });
+
+      if (response.ok) {
+        alert('AI settings saved successfully!');
+        setApiKey('');
+        fetchAiSettings();
+        window.dispatchEvent(new Event('ai-settings-changed'));
+      } else {
+        const errData = await response.json();
+        alert(`Failed to save settings: ${errData.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      console.error('Failed to save AI settings:', e);
+      alert('An error occurred while saving AI settings.');
+    } finally {
+      setSavingAiSettings(false);
+    }
+  };
+
+  const handleRemoveAiKey = async () => {
+    if (!confirm('Are you sure you want to remove your stored API Key? This will disable custom AI routing and delete your stored credentials.')) {
+      return;
+    }
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    try {
+      const response = await fetch('http://localhost:8000/api/settings/ai', {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        alert('Credentials deleted successfully.');
+        setApiKey('');
+        fetchAiSettings();
+        window.dispatchEvent(new Event('ai-settings-changed'));
+      }
+    } catch (e) {
+      console.error('Failed to delete credentials:', e);
+    }
+  };
+
   const models = [
     { id: 'gemini', name: 'Google Gemini 1.5 Pro', desc: 'Default active engine. Highly accurate schema understanding and prompt token capacity.', quality: 'Exceptional', speed: 'Ultra Fast' },
     { id: 'claude', name: 'Anthropic Claude 3.5 Sonnet', desc: 'Excellent SQL synthesis, highly robust queries on complex nested joins.', quality: 'Advanced', speed: 'Moderate' },
@@ -63,11 +214,11 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto bg-background">
+    <div className="flex-1 overflow-y-auto bg-background animate-fade-in">
       <div className="max-w-4xl mx-auto px-6 py-8 md:px-12">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-extrabold tracking-tight">Workspace Settings</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/75 bg-clip-text text-transparent">Workspace Settings</h1>
           <p className="text-muted-foreground text-sm mt-1">
             Manage your analytics settings, toggle AI models, and customize API credentials.
           </p>
@@ -79,7 +230,7 @@ export default function SettingsPage() {
             { id: 'profile', label: 'Profile' },
             { id: 'model', label: 'AI Model' },
             { id: 'appearance', label: 'Appearance' },
-            { id: 'api', label: 'API Keys' },
+            { id: 'api', label: 'AI Settings' },
             { id: 'danger', label: 'Danger Zone' },
           ].map((tab) => (
             <button
@@ -222,33 +373,147 @@ export default function SettingsPage() {
         {activeTab === 'api' && (
           <div className="space-y-6">
             <PremiumCard className="p-6 border-border/40">
-              <div className="flex items-center justify-between gap-4 mb-6">
+              <div className="flex items-center justify-between gap-4 mb-4">
                 <h2 className="text-lg font-bold flex items-center gap-2">
-                  <Key className="h-5 w-5 text-primary" /> API Keys
+                  <Key className="h-5 w-5 text-primary" /> Bring Your Own API Key (BYOK)
                 </h2>
-                <Button size="sm" onClick={() => alert('New API key generated!')}>Create API Key</Button>
               </div>
-              
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl border border-border/40 bg-secondary/20">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-bold text-sm">Production Key</p>
-                      <p className="text-xs font-mono text-muted-foreground mt-1">
-                        sk_live_...48acfe
+              <p className="text-xs text-muted-foreground mb-6 leading-relaxed">
+                Configure your own API keys to query custom LLMs directly. When disabled or missing, AskDB automatically runs requests using the platform's default managed credentials.
+              </p>
+
+              {loadingAiSettings ? (
+                <div className="flex items-center justify-center h-48 text-muted-foreground animate-pulse text-sm">
+                  Loading AI Configuration...
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Status Indicator */}
+                  <div className="p-4 rounded-xl border border-border/40 bg-secondary/15 flex items-center gap-2">
+                    <CheckCircle className={`h-5 w-5 ${usePersonalKey && hasKey ? 'text-emerald-500' : 'text-primary'}`} />
+                    <span className="text-sm font-semibold">
+                      {usePersonalKey && hasKey ? (
+                        <span className="text-emerald-500">✓ Using your personal {providerNames[provider] || provider} API key</span>
+                      ) : (
+                        <span className="text-muted-foreground">✓ Using AskDB default AI</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Enable Switch */}
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-border/40 bg-card">
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold">Use my API key</p>
+                      <p className="text-xs text-muted-foreground">
+                        Toggle to route database natural language queries through your personal key.
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => alert('API Key copied to clipboard!')}>
-                        Copy
-                      </Button>
-                      <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={usePersonalKey}
+                        onChange={(e) => setUsePersonalKey(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-secondary peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-background after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                    </label>
+                  </div>
+
+                  {/* Settings Form */}
+                  <div className={`space-y-4 transition-all duration-300 ${!usePersonalKey ? 'opacity-55' : ''}`}>
+                    {/* Provider Select */}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        AI Provider
+                      </label>
+                      <select
+                        value={provider}
+                        onChange={(e) => setProvider(e.target.value)}
+                        disabled={!usePersonalKey}
+                        className="w-full px-4 py-2.5 rounded-lg border border-border bg-secondary/50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors"
+                      >
+                        <option value="gemini">Google Gemini</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic Claude</option>
+                        <option value="groq">Groq</option>
+                        <option value="fireworks">Fireworks AI</option>
+                      </select>
+                    </div>
+
+                    {/* Model Select */}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                        Model Name
+                      </label>
+                      <select
+                        value={selectedAiModel}
+                        onChange={(e) => setSelectedAiModel(e.target.value)}
+                        disabled={!usePersonalKey}
+                        className="w-full px-4 py-2.5 rounded-lg border border-border bg-secondary/50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors"
+                      >
+                        {(modelsByProvider[provider] || []).map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* API Key Input */}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
+                        <span>API Key</span>
+                        {hasKey && (
+                          <span className="text-[10px] text-emerald-500 font-bold lowercase bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                            Key Configured
+                          </span>
+                        )}
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showApiKey ? 'text' : 'password'}
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          disabled={!usePersonalKey}
+                          placeholder={hasKey ? '••••••••••••••••••••••••••••••••' : 'Enter API key credentials'}
+                          className="w-full pl-4 pr-12 py-2.5 rounded-lg border border-border bg-secondary/50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          disabled={!usePersonalKey}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
+                        >
+                          {showApiKey ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
+
+                  {/* Actions Bar */}
+                  <div className="flex items-center gap-3 pt-4 border-t border-border/40">
+                    <Button
+                      onClick={handleSaveAiSettings}
+                      disabled={savingAiSettings}
+                      className="flex items-center gap-2"
+                    >
+                      <Save className="h-4 w-4" />
+                      {savingAiSettings ? 'Saving Settings...' : 'Save AI Configuration'}
+                    </Button>
+
+                    {hasKey && (
+                      <Button
+                        variant="ghost"
+                        onClick={handleRemoveAiKey}
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive flex items-center gap-2 ml-auto"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Remove Key
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </PremiumCard>
           </div>
         )}

@@ -30,6 +30,15 @@ def init_db():
                 print("Auto-migration: Altering messages.plot column to LONGTEXT...")
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE messages MODIFY COLUMN plot LONGTEXT"))
+                    
+    # Auto-migration: Check if column 'created_at' exists in messages table
+    if "messages" in inspector.get_table_names():
+        columns = [c["name"] for c in inspector.get_columns("messages")]
+        if "created_at" not in columns:
+            print("Auto-migration: Adding created_at column to messages table...")
+            with engine.begin() as conn:
+                alter_syntax = "ALTER TABLE messages ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP" if dialect == "sqlite" else "ALTER TABLE messages ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                conn.execute(text(alter_syntax))
     
     # Dialect-specific types and syntax
     pk_type = "INTEGER PRIMARY KEY AUTOINCREMENT" if dialect == "sqlite" else "INT AUTO_INCREMENT PRIMARY KEY"
@@ -95,7 +104,8 @@ def init_db():
             content {text_type} NOT NULL,
             sql_query {text_type},
             plot {plot_type},
-            timestamp VARCHAR(50) NOT NULL
+            timestamp VARCHAR(50) NOT NULL,
+            created_at {ts_type}
         )
         """))
         
@@ -114,6 +124,20 @@ def init_db():
             created_at {ts_type}
         )
         """))
+        
+        # Create user_ai_settings table
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS user_ai_settings (
+            user_id INT PRIMARY KEY,
+            provider VARCHAR(50) NOT NULL,
+            encrypted_api_key TEXT,
+            model VARCHAR(100),
+            use_personal_key BOOLEAN DEFAULT 0,
+            created_at {ts_type},
+            updated_at {ts_type}
+        )
+        """))
+
 
 def hash_password(password: str, salt: str = None) -> tuple[str, str]:
     if salt is None:
@@ -436,7 +460,7 @@ def get_chat_messages(chat_id: str) -> list:
     engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT id, role, content, sql_query, plot, timestamp FROM messages WHERE chat_id = :chat_id ORDER BY timestamp ASC"),
+            text("SELECT id, role, content, sql_query, plot, timestamp FROM messages WHERE chat_id = :chat_id ORDER BY created_at ASC"),
             {"chat_id": chat_id}
         ).fetchall()
         
@@ -480,7 +504,7 @@ def save_report(user_id: int, message_id: str, title: str = None) -> str:
             
         # Get preceding user query (the latest user message in the same chat)
         user_query_row = conn.execute(
-            text("SELECT content FROM messages WHERE chat_id = :chat_id AND role = 'user' ORDER BY timestamp DESC LIMIT 1"),
+            text("SELECT content FROM messages WHERE chat_id = :chat_id AND role = 'user' ORDER BY created_at DESC LIMIT 1"),
             {"chat_id": chat_id}
         ).fetchone()
         
@@ -552,3 +576,81 @@ def delete_report(user_id: int, report_id: str) -> bool:
             {"id": report_id, "user_id": user_id}
         )
         return result.rowcount > 0
+
+def get_user_ai_settings(user_id: int) -> dict | None:
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+            SELECT provider, encrypted_api_key, model, use_personal_key 
+            FROM user_ai_settings 
+            WHERE user_id = :user_id
+            """),
+            {"user_id": user_id}
+        ).fetchone()
+        
+        if not row:
+            return None
+            
+        return {
+            "user_id": user_id,
+            "provider": row[0],
+            "encrypted_api_key": row[1],
+            "model": row[2],
+            "use_personal_key": bool(row[3])
+        }
+
+def save_user_ai_settings(user_id: int, provider: str, encrypted_key: str, model: str, use_personal_key: bool) -> None:
+    init_db()
+    engine = get_engine()
+    with engine.begin() as conn:
+        # Check if settings exist for the user
+        exist = conn.execute(
+            text("SELECT 1 FROM user_ai_settings WHERE user_id = :user_id"),
+            {"user_id": user_id}
+        ).fetchone()
+        
+        if exist:
+            conn.execute(
+                text("""
+                UPDATE user_ai_settings 
+                SET provider = :provider, 
+                    encrypted_api_key = :encrypted_api_key, 
+                    model = :model, 
+                    use_personal_key = :use_personal_key,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = :user_id
+                """),
+                {
+                    "user_id": user_id,
+                    "provider": provider,
+                    "encrypted_api_key": encrypted_key,
+                    "model": model,
+                    "use_personal_key": 1 if use_personal_key else 0
+                }
+            )
+        else:
+            conn.execute(
+                text("""
+                INSERT INTO user_ai_settings (user_id, provider, encrypted_api_key, model, use_personal_key)
+                VALUES (:user_id, :provider, :encrypted_api_key, :model, :use_personal_key)
+                """),
+                {
+                    "user_id": user_id,
+                    "provider": provider,
+                    "encrypted_api_key": encrypted_key,
+                    "model": model,
+                    "use_personal_key": 1 if use_personal_key else 0
+                }
+            )
+
+def delete_user_ai_settings(user_id: int) -> None:
+    init_db()
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM user_ai_settings WHERE user_id = :user_id"),
+            {"user_id": user_id}
+        )
+

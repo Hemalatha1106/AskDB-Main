@@ -22,13 +22,28 @@ export default function NewChatPage() {
       id: '1',
       role: 'assistant',
       content:
-        'Hello! I\'m AskDB, your AI-powered SQL assistant. I\'m connected to your database and ready to help. What would you like to know about your data?',
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
+        "Hello! I'm AskDB, your AI-powered SQL assistant. I'm connected to your database and ready to help. What would you like to know about your data?",
+      timestamp: '',
     },
   ]);
+
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0].id === '1' && prev[0].timestamp === '') {
+        return [
+          {
+            ...prev[0],
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+          },
+        ];
+      }
+      return prev;
+    });
+  }, []);
+
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 

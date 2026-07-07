@@ -19,7 +19,8 @@ class PromptBuilder:
             f"2. Ensure table and column names exactly match the schema provided.\n"
             f"3. If joining tables, use explicit JOIN syntax with foreign keys.\n"
             f"4. Make string comparisons case-insensitive where appropriate (e.g. using LIKE or COLLATE NOCASE).\n"
-            f"5. If the question asks for tables, columns, or information that does not exist in the provided schema, return EXACTLY: '-- ERROR: Information not found in schema.' (Note: Standard database metadata queries like SHOW TABLES, DESCRIBE table, or queries targeting sqlite_master/information_schema to list tables/columns are fully allowed and should not trigger this error.)"
+            f"5. If the question asks for tables, columns, or information that does not exist in the provided schema, return EXACTLY: '-- ERROR: Information not found in schema.' (Note: Standard database metadata queries like SHOW TABLES, DESCRIBE table, or queries targeting sqlite_master/information_schema to list tables/columns are fully allowed and should not trigger this error.)\n"
+            f"6. Crucially, when joining tables, ALWAYS prefix ALL column references in the SELECT, JOIN, GROUP BY, and ORDER BY clauses with their respective table name or table alias (e.g. `e.department_id` or `d.department_id` instead of just `department_id`) to prevent 'ambiguous column' errors."
         )
 
         user_message = (

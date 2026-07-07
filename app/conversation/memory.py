@@ -48,7 +48,7 @@ def get_memory(chat_id: str) -> ConversationMemory:
 
     return _memories[chat_id]
 
-def update_memory_after_query(chat_id: str, query: str, resolved_query: str, sql: str, columns: List[str], rows: List[Any], answer: str):
+def update_memory_after_query(chat_id: str, query: str, resolved_query: str, sql: str, columns: List[str], rows: List[Any], answer: str, user_id: int = None):
     """
     Updates the conversation memory for a chat_id with the new interaction details.
     Manages the sliding window of messages, summarizing older messages when limit is exceeded.
@@ -74,7 +74,8 @@ def update_memory_after_query(chat_id: str, query: str, resolved_query: str, sql
                 sql=sql,
                 columns=columns,
                 rows=rows,
-                prev_entities=memory.active_entities
+                prev_entities=memory.active_entities,
+                user_id=user_id
             )
             memory.active_entities = updated_entities
         except Exception as e:
@@ -86,7 +87,7 @@ def update_memory_after_query(chat_id: str, query: str, resolved_query: str, sql
             # We keep the latest 8 messages (4 interactions)
             messages_to_summarize = memory.messages[:-8]
             summarizer = Summarizer()
-            new_summary = summarizer.summarize(memory.summary, messages_to_summarize)
+            new_summary = summarizer.summarize(memory.summary, messages_to_summarize, user_id=user_id)
             
             memory.summary = new_summary
             memory.messages = memory.messages[-8:]
@@ -97,3 +98,4 @@ def update_memory_after_query(chat_id: str, query: str, resolved_query: str, sql
             
     # Save back to global store
     _memories[chat_id] = memory
+
