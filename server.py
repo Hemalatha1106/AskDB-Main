@@ -2,9 +2,14 @@ import os
 import sys
 import base64
 import uuid
+import json
+import secrets
+import urllib.request
+import urllib.parse
 from typing import Optional
 from sqlalchemy import text
 from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -46,6 +51,17 @@ from app.llm.providers import (
     InvalidAPIKeyError,
     ModelUnavailableError
 )
+from app.utils.helper import load_env
+
+load_env()
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 
 app = FastAPI(title="AskDB API", description="AI-powered SQL query assistant API with Multi-Connection Isolation")
@@ -152,6 +168,189 @@ def login(req: LoginRequest):
 @app.get("/api/auth/me")
 def me(user = Depends(get_current_user)):
     return {"success": True, "user": user}
+
+@app.get("/api/auth/google/login")
+def google_login():
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="Google OAuth is not configured. Please set GOOGLE_CLIENT_ID in the environment.")
+    redirect_uri = f"{BACKEND_URL}/api/auth/google/callback"
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": secrets.token_hex(16),
+        "access_type": "offline",
+        "prompt": "select_account"
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+@app.get("/api/auth/google/callback")
+def google_callback(code: str, state: Optional[str] = None):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=400, detail="Google OAuth credentials are not configured.")
+    
+    # 1. Exchange authorization code for tokens
+    token_url = "https://oauth2.googleapis.com/token"
+    redirect_uri = f"{BACKEND_URL}/api/auth/google/callback"
+    data = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code"
+    }
+    data_encoded = urllib.parse.urlencode(data).encode("utf-8")
+    
+    try:
+        req = urllib.request.Request(token_url, data=data_encoded, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(req) as res:
+            token_res = json.loads(res.read().decode("utf-8"))
+        access_token = token_res.get("access_token")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to exchange Google OAuth code: {str(e)}")
+        
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Failed to obtain Google access token.")
+        
+    # 2. Get user info
+    user_info_url = "https://www.googleapis.com/oauth2/v3/userinfo"
+    try:
+        req = urllib.request.Request(user_info_url)
+        req.add_header("Authorization", f"Bearer {access_token}")
+        with urllib.request.urlopen(req) as res:
+            user_info = json.loads(res.read().decode("utf-8"))
+        email = user_info.get("email")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to get Google user info: {str(e)}")
+        
+    if not email:
+        raise HTTPException(status_code=400, detail="Google did not return user email.")
+        
+    # 3. Create or get user
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT id, email FROM users WHERE email = :email"),
+            {"email": email}
+        ).fetchone()
+        
+    if row:
+        user_id = row[0]
+    else:
+        # Create user with a random password since it's OAuth
+        random_password = secrets.token_hex(32)
+        user_id = create_user(email, random_password)
+        
+    # 4. Create session
+    token = create_session(user_id)
+    
+    # 5. Redirect to frontend callback
+    frontend_callback_url = f"{FRONTEND_URL}/auth/callback?token={token}&email={urllib.parse.quote(email)}&id={user_id}"
+    return RedirectResponse(frontend_callback_url)
+
+@app.get("/api/auth/github/login")
+def github_login():
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=400, detail="GitHub OAuth is not configured. Please set GITHUB_CLIENT_ID in the environment.")
+    redirect_uri = f"{BACKEND_URL}/api/auth/github/callback"
+    params = {
+        "client_id": GITHUB_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "scope": "user:email",
+        "state": secrets.token_hex(16)
+    }
+    url = "https://github.com/login/oauth/authorize?" + urllib.parse.urlencode(params)
+    return RedirectResponse(url)
+
+@app.get("/api/auth/github/callback")
+def github_callback(code: str, state: Optional[str] = None):
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(status_code=400, detail="GitHub OAuth credentials are not configured.")
+    
+    # 1. Exchange authorization code for access token
+    token_url = "https://github.com/login/oauth/access_token"
+    data = {
+        "client_id": GITHUB_CLIENT_ID,
+        "client_secret": GITHUB_CLIENT_SECRET,
+        "code": code,
+        "redirect_uri": f"{BACKEND_URL}/api/auth/github/callback"
+    }
+    data_encoded = urllib.parse.urlencode(data).encode("utf-8")
+    
+    try:
+        req = urllib.request.Request(token_url, data=data_encoded, method="POST")
+        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        req.add_header("Accept", "application/json")
+        with urllib.request.urlopen(req) as res:
+            token_res = json.loads(res.read().decode("utf-8"))
+        access_token = token_res.get("access_token")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to exchange GitHub OAuth code: {str(e)}")
+        
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Failed to obtain GitHub access token.")
+        
+    # 2. Get user profile info
+    email = None
+    try:
+        user_url = "https://api.github.com/user"
+        req = urllib.request.Request(user_url)
+        req.add_header("Authorization", f"token {access_token}")
+        req.add_header("User-Agent", "AskDB-App")
+        with urllib.request.urlopen(req) as res:
+            user_info = json.loads(res.read().decode("utf-8"))
+        email = user_info.get("email")
+    except Exception as e:
+        pass
+        
+    # 3. If primary email is not public, get all emails and pick the primary verified one
+    if not email:
+        try:
+            emails_url = "https://api.github.com/user/emails"
+            req = urllib.request.Request(emails_url)
+            req.add_header("Authorization", f"token {access_token}")
+            req.add_header("User-Agent", "AskDB-App")
+            with urllib.request.urlopen(req) as res:
+                emails_info = json.loads(res.read().decode("utf-8"))
+            for email_entry in emails_info:
+                if email_entry.get("primary") and email_entry.get("verified"):
+                    email = email_entry.get("email")
+                    break
+            if not email and emails_info:
+                verified_emails = [e.get("email") for e in emails_info if e.get("verified")]
+                if verified_emails:
+                    email = verified_emails[0]
+                else:
+                    email = emails_info[0].get("email")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to get GitHub user emails: {str(e)}")
+            
+    if not email:
+        raise HTTPException(status_code=400, detail="GitHub did not return a user email.")
+        
+    # 4. Create or get user
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT id, email FROM users WHERE email = :email"),
+            {"email": email}
+        ).fetchone()
+        
+    if row:
+        user_id = row[0]
+    else:
+        random_password = secrets.token_hex(32)
+        user_id = create_user(email, random_password)
+        
+    # 5. Create session
+    token = create_session(user_id)
+    
+    # 6. Redirect to frontend callback
+    frontend_callback_url = f"{FRONTEND_URL}/auth/callback?token={token}&email={urllib.parse.quote(email)}&id={user_id}"
+    return RedirectResponse(frontend_callback_url)
 
 # --- Database Connection Routes ---
 
