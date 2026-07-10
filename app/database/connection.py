@@ -29,7 +29,12 @@ def get_engine():
         if db_url.startswith("sqlite"):
             _engine = create_engine(db_url, connect_args={"check_same_thread": False})
         else:
-            _engine = create_engine(db_url)
+            # pool_pre_ping=True detects dropped connections; pool_recycle=280 recycles idle connections before database timeouts
+            _engine = create_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_recycle=280
+            )
             
     return _engine
 
