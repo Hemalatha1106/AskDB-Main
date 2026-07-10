@@ -137,7 +137,7 @@ export default function LoginPage() {
 
           {/* OAuth Buttons */}
           <div className="space-y-3">
-            <a href="http://127.0.0.1:8000/api/auth/google/login" className="block w-full">
+            <a href={`${API_BASE_URL}/api/auth/google/login`} className="block w-full">
               <Button
                 type="button"
                 variant="outline"
@@ -169,7 +169,7 @@ export default function LoginPage() {
                 Continue with Google
               </Button>
             </a>
-            <a href="http://127.0.0.1:8000/api/auth/github/login" className="block w-full">
+            <a href={`${API_BASE_URL}/api/auth/github/login`} className="block w-full">
               <Button
                 type="button"
                 variant="outline"
