@@ -1,0 +1,23 @@
+{
+  "id": "d178bf8f-5511-4eeb-a723-eff85e4927f7",
+  "user_id": 3,
+  "sender": "sender@askdb.com",
+  "recipients": [
+    "client@analytics.com"
+  ],
+  "cc": [
+    "boss@askdb.com"
+  ],
+  "bcc": null,
+  "subject": "Monthly Performance Insights",
+  "body": "Good morning,\n\nPlease find attached the Q2 analysis report.",
+  "timestamp": "2026-07-10T11:48:31.264066",
+  "attachments": [
+    {
+      "original_filename": "Q2_Review.pdf",
+      "disk_filename": "d178bf8f-5511-4eeb-a723-eff85e4927f7_Q2_Review.pdf",
+      "size_bytes": 25,
+      "mime_type": "application/pdf"
+    }
+  ]
+}

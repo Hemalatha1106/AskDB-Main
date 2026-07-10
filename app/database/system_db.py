@@ -137,6 +137,43 @@ def init_db():
             updated_at {ts_type}
         )
         """))
+        
+        # Create user_google_tokens table
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS user_google_tokens (
+            user_id INT PRIMARY KEY,
+            email VARCHAR(255) NOT NULL,
+            access_token TEXT NOT NULL,
+            refresh_token TEXT,
+            expires_at DATETIME NOT NULL,
+            created_at {ts_type}
+        )
+        """))
+        
+        # Create compiled_reports table
+        conn.execute(text(f"""
+        CREATE TABLE IF NOT EXISTS compiled_reports (
+            id VARCHAR(64) PRIMARY KEY,
+            user_id INT NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            selected_report_ids TEXT NOT NULL,
+            sections_data TEXT,
+            executive_summary TEXT,
+            overall_findings TEXT,
+            recommendations TEXT,
+            export_format VARCHAR(20) NOT NULL,
+            sender VARCHAR(255) NOT NULL,
+            recipients TEXT NOT NULL,
+            cc TEXT,
+            bcc TEXT,
+            subject VARCHAR(255),
+            email_body TEXT,
+            delivery_status VARCHAR(20) NOT NULL DEFAULT 'Draft',
+            delivery_timestamp DATETIME,
+            error_message TEXT,
+            created_at {ts_type}
+        )
+        """))
 
 
 def hash_password(password: str, salt: str = None) -> tuple[str, str]:
@@ -653,4 +690,214 @@ def delete_user_ai_settings(user_id: int) -> None:
             text("DELETE FROM user_ai_settings WHERE user_id = :user_id"),
             {"user_id": user_id}
         )
+
+def save_user_google_tokens(user_id: int, email: str, access_token: str, refresh_token: str, expires_in: int):
+    init_db()
+    engine = get_engine()
+    expires_at = datetime.now() + timedelta(seconds=expires_in)
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT 1 FROM user_google_tokens WHERE user_id = :user_id"),
+            {"user_id": user_id}
+        ).fetchone()
+        if row:
+            if refresh_token:
+                conn.execute(
+                    text("""
+                    UPDATE user_google_tokens 
+                    SET email = :email, access_token = :access_token, refresh_token = :refresh_token, expires_at = :expires_at
+                    WHERE user_id = :user_id
+                    """),
+                    {"user_id": user_id, "email": email, "access_token": access_token, "refresh_token": refresh_token, "expires_at": expires_at}
+                )
+            else:
+                conn.execute(
+                    text("""
+                    UPDATE user_google_tokens 
+                    SET email = :email, access_token = :access_token, expires_at = :expires_at
+                    WHERE user_id = :user_id
+                    """),
+                    {"user_id": user_id, "email": email, "access_token": access_token, "expires_at": expires_at}
+                )
+        else:
+            conn.execute(
+                text("""
+                INSERT INTO user_google_tokens (user_id, email, access_token, refresh_token, expires_at)
+                VALUES (:user_id, :email, :access_token, :refresh_token, :expires_at)
+                """),
+                {"user_id": user_id, "email": email, "access_token": access_token, "refresh_token": refresh_token, "expires_at": expires_at}
+            )
+
+def get_user_google_tokens(user_id: int) -> dict | None:
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT email, access_token, refresh_token, expires_at FROM user_google_tokens WHERE user_id = :user_id"),
+            {"user_id": user_id}
+        ).fetchone()
+        if not row:
+            return None
+        email, access_token, refresh_token, expires_at = row
+        if isinstance(expires_at, str):
+            try:
+                expires_at = datetime.strptime(expires_at.split(".")[0], "%Y-%m-%d %H:%M:%S")
+            except:
+                pass
+        return {
+            "user_id": user_id,
+            "email": email,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at
+        }
+
+def disconnect_user_google(user_id: int) -> None:
+    init_db()
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM user_google_tokens WHERE user_id = :user_id"), {"user_id": user_id})
+
+def create_compiled_report(id: str, user_id: int, title: str, selected_report_ids: str, sections_data: str, executive_summary: str, overall_findings: str, recommendations: str, export_format: str, sender: str, recipients: str, cc: str = None, bcc: str = None, subject: str = None, email_body: str = None, delivery_status: str = 'Draft') -> None:
+    init_db()
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+            INSERT INTO compiled_reports (id, user_id, title, selected_report_ids, sections_data, executive_summary, overall_findings, recommendations, export_format, sender, recipients, cc, bcc, subject, email_body, delivery_status)
+            VALUES (:id, :user_id, :title, :selected_report_ids, :sections_data, :executive_summary, :overall_findings, :recommendations, :export_format, :sender, :recipients, :cc, :bcc, :subject, :email_body, :delivery_status)
+            """),
+            {
+                "id": id,
+                "user_id": user_id,
+                "title": title,
+                "selected_report_ids": selected_report_ids,
+                "sections_data": sections_data,
+                "executive_summary": executive_summary,
+                "overall_findings": overall_findings,
+                "recommendations": recommendations,
+                "export_format": export_format,
+                "sender": sender,
+                "recipients": recipients,
+                "cc": cc,
+                "bcc": bcc,
+                "subject": subject,
+                "email_body": email_body,
+                "delivery_status": delivery_status
+            }
+        )
+
+def get_compiled_report(user_id: int, report_id: str) -> dict | None:
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+            SELECT id, title, selected_report_ids, sections_data, executive_summary, overall_findings, recommendations, export_format, sender, recipients, cc, bcc, subject, email_body, delivery_status, delivery_timestamp, error_message, created_at
+            FROM compiled_reports
+            WHERE id = :id AND user_id = :user_id
+            """),
+            {"id": report_id, "user_id": user_id}
+        ).fetchone()
+        if not row:
+            return None
+        
+        created_at = row[17]
+        if isinstance(created_at, str):
+            created_at = created_at.split(".")[0]
+        else:
+            created_at = created_at.strftime("%Y-%m-%d %H:%M:%S") if created_at else None
+            
+        delivery_timestamp = row[15]
+        if isinstance(delivery_timestamp, str):
+            delivery_timestamp = delivery_timestamp.split(".")[0]
+        else:
+            delivery_timestamp = delivery_timestamp.strftime("%Y-%m-%d %H:%M:%S") if delivery_timestamp else None
+
+        return {
+            "id": row[0],
+            "title": row[1],
+            "selected_report_ids": row[2],
+            "sections_data": row[3],
+            "executive_summary": row[4],
+            "overall_findings": row[5],
+            "recommendations": row[6],
+            "export_format": row[7],
+            "sender": row[8],
+            "recipients": row[9],
+            "cc": row[10],
+            "bcc": row[11],
+            "subject": row[12],
+            "email_body": row[13],
+            "delivery_status": row[14],
+            "delivery_timestamp": delivery_timestamp,
+            "error_message": row[16],
+            "created_at": created_at
+        }
+
+def list_compiled_reports(user_id: int) -> list:
+    init_db()
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("""
+            SELECT id, title, selected_report_ids, sections_data, executive_summary, overall_findings, recommendations, export_format, sender, recipients, cc, bcc, subject, email_body, delivery_status, delivery_timestamp, error_message, created_at
+            FROM compiled_reports
+            WHERE user_id = :user_id
+            ORDER BY created_at DESC
+            """),
+            {"user_id": user_id}
+        ).fetchall()
+        
+        reports = []
+        for r in rows:
+            created_at = r[17]
+            if isinstance(created_at, str):
+                created_at = created_at.split(".")[0]
+            else:
+                created_at = created_at.strftime("%Y-%m-%d %H:%M:%S") if created_at else None
+                
+            delivery_timestamp = r[15]
+            if isinstance(delivery_timestamp, str):
+                delivery_timestamp = delivery_timestamp.split(".")[0]
+            else:
+                delivery_timestamp = delivery_timestamp.strftime("%Y-%m-%d %H:%M:%S") if delivery_timestamp else None
+                
+            reports.append({
+                "id": r[0],
+                "title": r[1],
+                "selected_report_ids": r[2],
+                "sections_data": r[3],
+                "executive_summary": r[4],
+                "overall_findings": r[5],
+                "recommendations": r[6],
+                "export_format": r[7],
+                "sender": r[8],
+                "recipients": r[9],
+                "cc": r[10],
+                "bcc": r[11],
+                "subject": r[12],
+                "email_body": r[13],
+                "delivery_status": r[14],
+                "delivery_timestamp": delivery_timestamp,
+                "error_message": r[16],
+                "created_at": created_at
+            })
+        return reports
+
+def update_compiled_report_status(report_id: str, delivery_status: str, delivery_timestamp = None, error_message: str = None) -> None:
+    init_db()
+    engine = get_engine()
+    with engine.begin() as conn:
+        if delivery_timestamp:
+            conn.execute(
+                text("UPDATE compiled_reports SET delivery_status = :status, delivery_timestamp = :timestamp, error_message = :err WHERE id = :id"),
+                {"status": delivery_status, "timestamp": delivery_timestamp, "err": error_message, "id": report_id}
+            )
+        else:
+            conn.execute(
+                text("UPDATE compiled_reports SET delivery_status = :status, error_message = :err WHERE id = :id"),
+                {"status": delivery_status, "err": error_message, "id": report_id}
+            )
+
 

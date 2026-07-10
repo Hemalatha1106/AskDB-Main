@@ -8,6 +8,7 @@ import urllib.request
 import urllib.parse
 from typing import Optional
 from sqlalchemy import text
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,13 +44,23 @@ from app.database.system_db import (
     delete_report,
     get_user_ai_settings,
     save_user_ai_settings,
-    delete_user_ai_settings
+    delete_user_ai_settings,
+    save_user_google_tokens,
+    get_user_google_tokens,
+    disconnect_user_google,
+    create_compiled_report,
+    get_compiled_report,
+    list_compiled_reports,
+    update_compiled_report_status
 )
+from app.utils.document_generator import DocumentGenerator
+from app.utils.email_service import get_email_provider
 from app.llm.providers import (
     encrypt_key,
     decrypt_key,
     InvalidAPIKeyError,
-    ModelUnavailableError
+    ModelUnavailableError,
+    get_user_provider
 )
 from app.utils.helper import load_env
 
@@ -170,18 +181,22 @@ def me(user = Depends(get_current_user)):
     return {"success": True, "user": user}
 
 @app.get("/api/auth/google/login")
-def google_login():
+def google_login(token: Optional[str] = None):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=400, detail="Google OAuth is not configured. Please set GOOGLE_CLIENT_ID in the environment.")
     redirect_uri = f"{BACKEND_URL}/api/auth/google/callback"
+    
+    # Carry active session token in state to allow link/connect Gmail accounts
+    state = token if token else secrets.token_hex(16)
+    
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "openid email profile",
-        "state": secrets.token_hex(16),
+        "scope": "openid email profile https://www.googleapis.com/auth/gmail.send",
+        "state": state,
         "access_type": "offline",
-        "prompt": "select_account"
+        "prompt": "consent select_account"
     }
     url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     return RedirectResponse(url)
@@ -209,6 +224,8 @@ def google_callback(code: str, state: Optional[str] = None):
         with urllib.request.urlopen(req) as res:
             token_res = json.loads(res.read().decode("utf-8"))
         access_token = token_res.get("access_token")
+        refresh_token = token_res.get("refresh_token")
+        expires_in = token_res.get("expires_in", 3600)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to exchange Google OAuth code: {str(e)}")
         
@@ -229,20 +246,30 @@ def google_callback(code: str, state: Optional[str] = None):
     if not email:
         raise HTTPException(status_code=400, detail="Google did not return user email.")
         
-    # 3. Create or get user
-    engine = get_engine()
-    with engine.connect() as conn:
-        row = conn.execute(
-            text("SELECT id, email FROM users WHERE email = :email"),
-            {"email": email}
-        ).fetchone()
-        
-    if row:
-        user_id = row[0]
-    else:
-        # Create user with a random password since it's OAuth
-        random_password = secrets.token_hex(32)
-        user_id = create_user(email, random_password)
+    # 3. Resolve user identity: Check if state holds a valid user session token
+    user_id = None
+    if state:
+        user_by_session = get_user_by_session(state)
+        if user_by_session:
+            user_id = user_by_session["id"]
+            
+    if not user_id:
+        engine = get_engine()
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id, email FROM users WHERE email = :email"),
+                {"email": email}
+            ).fetchone()
+            
+        if row:
+            user_id = row[0]
+        else:
+            # Create user with a random password since it's OAuth
+            random_password = secrets.token_hex(32)
+            user_id = create_user(email, random_password)
+            
+    # Save the Google tokens for reports shipping
+    save_user_google_tokens(user_id, email, access_token, refresh_token, expires_in)
         
     # 4. Create session
     token = create_session(user_id)
@@ -485,6 +512,420 @@ def api_delete_report(report_id: str, user = Depends(get_current_user)):
         return {"success": True}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Compiled Reports & Shipping Routes ---
+
+class ReportCompileRequest(BaseModel):
+    title: str
+    reportIds: list[str]
+    sections_data: Optional[list[dict]] = None
+
+class EmailSendRequest(BaseModel):
+    compiledReportId: Optional[str] = None
+    reportIds: Optional[list[str]] = None
+    title: Optional[str] = None
+    sections_data: Optional[list[dict]] = None
+    recipients: list[str]
+    cc: Optional[list[str]] = None
+    bcc: Optional[list[str]] = None
+    subject: str
+    body: str
+    format: str
+
+class EmailAssistRequest(BaseModel):
+    recipient: str
+    reportTitle: str
+    selectedReports: list[dict]
+    findings: str
+
+@app.get("/api/reports/gmail/status")
+def api_gmail_status(user = Depends(get_current_user)):
+    try:
+        tokens = get_user_google_tokens(user["id"])
+        if tokens:
+            return {"success": True, "connected": True, "email": tokens["email"]}
+        return {"success": True, "connected": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reports/gmail/disconnect")
+def api_gmail_disconnect(user = Depends(get_current_user)):
+    try:
+        disconnect_user_google(user["id"])
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reports/compile")
+def api_compile_report(req: ReportCompileRequest, user = Depends(get_current_user)):
+    try:
+        engine = get_engine()
+        loaded_reports = []
+        
+        # Load reports and verify user ownership
+        with engine.connect() as conn:
+            for rid in req.reportIds:
+                r = conn.execute(
+                    text("SELECT id, title, query, answer, plot, sql_query, created_at FROM reports WHERE id = :id AND user_id = :uid"),
+                    {"id": rid, "uid": user["id"]}
+                ).fetchone()
+                if not r:
+                    raise HTTPException(status_code=404, detail=f"Report {rid} not found or not owned by user.")
+                loaded_reports.append({
+                    "id": r[0],
+                    "title": r[1],
+                    "query": r[2],
+                    "answer": r[3],
+                    "plot": r[4] if r[4] else None,
+                    "sql_query": r[5] if r[5] else None,
+                    "created_at": str(r[6])
+                })
+                
+        if not loaded_reports:
+            raise HTTPException(status_code=400, detail="No valid reports selected.")
+            
+        # Use AI model to generate executive summary, overall findings, and recommendations
+        provider = get_user_provider(user["id"])
+        
+        reports_summary = []
+        for r in loaded_reports:
+            reports_summary.append(f"- Section Title: {r['title']}\n  Question: {r['query']}\n  AI Answer: {r['answer']}\n")
+            
+        system_prompt = "You are a professional business intelligence reporter and data analyst."
+        prompt = f"""
+        Analyze the following query reports from AskDB and generate a comprehensive executive analysis report in JSON format.
+        
+        Selected Reports:
+        {"".join(reports_summary)}
+        
+        You must output ONLY a valid JSON object. Do not wrap the JSON object in markdown blocks (like ```json) or add extra comments. Ensure the JSON conforms to this structure:
+        {{
+            "executive_summary": "A high-level 2-3 paragraph summary of the combined metrics and context.",
+            "overall_findings": "Key findings summarized in bullet points (1-2 sentences each). Use newline characters \\n for separate bullets.",
+            "recommendations": "Solid, actionable business recommendations based on these findings in bullet points. Use newline characters \\n for separate bullets."
+        }}
+        """
+        
+        ai_response = provider.generate(prompt=prompt, system_instruction=system_prompt, temperature=0.2)
+        
+        # Parse JSON from AI response
+        ai_response_cleaned = ai_response.strip()
+        if ai_response_cleaned.startswith("```"):
+            lines = ai_response_cleaned.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            ai_response_cleaned = "\n".join(lines).strip()
+            
+        try:
+            summary_data = json.loads(ai_response_cleaned)
+        except Exception as json_err:
+            print(f"Warning: Failed to parse AI JSON response: {json_err}. Raw: {ai_response}")
+            # Fallback values
+            summary_data = {
+                "executive_summary": "This combined analysis report consolidates data insights from AskDB saved sessions.",
+                "overall_findings": f"Consolidated metrics across {len(loaded_reports)} report areas.",
+                "recommendations": "Further analyze database performance and query logs."
+            }
+            
+        comp_id = str(uuid.uuid4())
+        
+        # Serialize sections data configuration
+        sections_conf = req.sections_data if req.sections_data else []
+        if not sections_conf:
+            for idx, r in enumerate(loaded_reports):
+                sections_conf.append({
+                    "report_id": r["id"],
+                    "title": r["title"],
+                    "notes": ""
+                })
+                
+        create_compiled_report(
+            id=comp_id,
+            user_id=user["id"],
+            title=req.title,
+            selected_report_ids=json.dumps(req.reportIds),
+            sections_data=json.dumps(sections_conf),
+            executive_summary=summary_data.get("executive_summary", ""),
+            overall_findings=summary_data.get("overall_findings", ""),
+            recommendations=summary_data.get("recommendations", ""),
+            export_format="PDF", # Default
+            sender="",
+            recipients="",
+            delivery_status="Draft"
+        )
+        
+        return {
+            "success": True,
+            "compiled_report": get_compiled_report(user["id"], comp_id)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reports/send")
+def api_send_compiled_report(req: EmailSendRequest, user = Depends(get_current_user)):
+    import tempfile
+    try:
+        compiled_id = req.compiledReportId
+        engine = get_engine()
+        
+        # Case A: Reopening and resending a compiled report
+        if compiled_id:
+            comp = get_compiled_report(user["id"], compiled_id)
+            if not comp:
+                raise HTTPException(status_code=404, detail="Compiled report not found.")
+            report_ids = json.loads(comp["selected_report_ids"])
+            sections_data = json.loads(comp["sections_data"])
+            title = comp["title"]
+            exec_summary = comp["executive_summary"]
+            findings = comp["overall_findings"]
+            recs = comp["recommendations"]
+        # Case B: Creating/compiling on the fly
+        else:
+            if not req.reportIds:
+                raise HTTPException(status_code=400, detail="Missing reportIds or compiledReportId.")
+            report_ids = req.reportIds
+            sections_data = req.sections_data if req.sections_data else []
+            if not sections_data:
+                for rid in report_ids:
+                    sections_data.append({"report_id": rid, "title": "Section", "notes": ""})
+            title = req.title or "Compiled Report"
+            
+            # Dynamic compilation of AI elements
+            comp_res = api_compile_report(ReportCompileRequest(title=title, reportIds=report_ids, sections_data=sections_data), user)
+            compiled_id = comp_res["compiled_report"]["id"]
+            comp = comp_res["compiled_report"]
+            exec_summary = comp["executive_summary"]
+            findings = comp["overall_findings"]
+            recs = comp["recommendations"]
+
+        # Load section details (original reports)
+        loaded_reports = {}
+        with engine.connect() as conn:
+            for rid in report_ids:
+                r = conn.execute(
+                    text("SELECT id, title, query, answer, plot, sql_query FROM reports WHERE id = :id AND user_id = :uid"),
+                    {"id": rid, "uid": user["id"]}
+                ).fetchone()
+                if r:
+                    loaded_reports[rid] = {
+                        "id": r[0],
+                        "title": r[1],
+                        "query": r[2],
+                        "answer": r[3],
+                        "plot": r[4] if r[4] else None,
+                        "sql_query": r[5] if r[5] else None
+                    }
+                    
+        # Construct dynamic sections for the document generator matching the arranged order/custom notes
+        final_sections = []
+        for idx, sec in enumerate(sections_data):
+            rid = sec.get("report_id")
+            original_report = loaded_reports.get(rid, {})
+            
+            # We append notes before/after or insert as insights
+            custom_title = sec.get("title") or original_report.get("title", f"Section {idx+1}")
+            notes = sec.get("notes", "")
+            
+            # Add section details
+            final_sections.append({
+                "title": custom_title,
+                "query": original_report.get("query", ""),
+                "answer": original_report.get("answer", ""),
+                "sql_query": original_report.get("sql_query"),
+                "plot": original_report.get("plot"),
+                "key_insights": notes,
+                "show_sql": True
+            })
+            
+        doc_data = {
+            "executive_summary": exec_summary,
+            "overall_findings": findings,
+            "recommendations": recs,
+            "sections": final_sections
+        }
+        
+        # Clean title for filename
+        clean_title = "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).strip().replace(" ", "_")
+        if not clean_title:
+            clean_title = "Report"
+            
+        fmt = req.format.upper()
+        if fmt == "PDF":
+            ext = "pdf"
+            mime_type = "application/pdf"
+        elif fmt == "DOCX":
+            ext = "docx"
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            ext = "md"
+            mime_type = "text/markdown"
+            
+        # Generate document file
+        generator = DocumentGenerator(title=title, creator="AskDB", database_name="Target DB")
+        temp_dir = tempfile.gettempdir()
+        temp_file_path = os.path.join(temp_dir, f"{clean_title}_{uuid.uuid4().hex[:8]}.{ext}")
+        
+        if fmt == "PDF":
+            generator.generate_pdf(doc_data, temp_file_path)
+        elif fmt == "DOCX":
+            generator.generate_docx(doc_data, temp_file_path)
+        else:
+            with open(temp_file_path, "w", encoding="utf-8") as f:
+                f.write(generator.generate_markdown(doc_data))
+                
+        # Read file bytes
+        with open(temp_file_path, "rb") as f:
+            file_bytes = f.read()
+            
+        # Clean up temp file
+        try:
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        except:
+            pass
+            
+        # Get active connected email address
+        tokens = get_user_google_tokens(user["id"])
+        sender_email = tokens["email"] if tokens else user["email"]
+        
+        # Set status to sending
+        update_compiled_report_status(compiled_id, "Sending")
+        
+        # Deliver email
+        email_provider = get_email_provider()
+        res = email_provider.send_email(
+            user_id=user["id"],
+            sender=sender_email,
+            recipients=req.recipients,
+            subject=req.subject,
+            body=req.body,
+            attachments=[{
+                "filename": f"{clean_title}.{ext}",
+                "content": file_bytes,
+                "mime_type": mime_type
+            }],
+            cc=req.cc,
+            bcc=req.bcc
+        )
+        
+        # Update database with results
+        status = "Sent" if res["success"] else "Failed"
+        timestamp = datetime.now() if res["success"] else None
+        err_msg = res["error"]
+        
+        update_compiled_report_status(compiled_id, status, timestamp, err_msg)
+        
+        # Save details about recipients/subject/format back to the compiled report row
+        # (This keeps a record of who it was sent to, format used, etc.)
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                UPDATE compiled_reports 
+                SET sender = :sender, recipients = :recipients, cc = :cc, bcc = :bcc, subject = :sub, email_body = :body, export_format = :fmt
+                WHERE id = :id
+                """),
+                {
+                    "id": compiled_id,
+                    "sender": sender_email,
+                    "recipients": ",".join(req.recipients),
+                    "cc": ",".join(req.cc) if req.cc else "",
+                    "bcc": ",".join(req.bcc) if req.bcc else "",
+                    "sub": req.subject,
+                    "body": req.body,
+                    "fmt": fmt
+                }
+            )
+            
+        if not res["success"]:
+            raise HTTPException(status_code=500, detail=f"Email delivery failed: {err_msg}")
+            
+        return {
+            "success": True,
+            "compiled_id": compiled_id,
+            "message_id": res["message_id"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reports/generate-email")
+def api_generate_email_draft(req: EmailAssistRequest, user = Depends(get_current_user)):
+    try:
+        provider = get_user_provider(user["id"])
+        
+        reports_details = []
+        for idx, r in enumerate(req.selectedReports):
+            reports_details.append(f"- Report {idx+1}: {r.get('title')}\n  Context: {r.get('preview') or ''}\n")
+            
+        system_prompt = "You are a professional assistant drafting an email copy."
+        prompt = f"""
+        Draft a polite and polished email copy to ship a database report to a recipient.
+        
+        Details:
+        - Recipient Name/Address: {req.recipient}
+        - Report Title: {req.reportTitle}
+        - Combined Findings Summary: {req.findings}
+        - Selected report contents:
+        {"".join(reports_details)}
+        
+        Draft a clear email body. Use placeholders like Good morning, and standard professional greetings. Keep it concise, highlighting that the AskDB report includes analysis on these key points. End with a polite closing. Do not include markdown code block syntax. Return only the raw text of the email body.
+        """
+        
+        email_draft = provider.generate(prompt=prompt, system_instruction=system_prompt, temperature=0.7)
+        return {"success": True, "email_body": email_draft.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/reports/compiled")
+def api_list_compiled_reports(user = Depends(get_current_user)):
+    try:
+        compiled = list_compiled_reports(user["id"])
+        return {"success": True, "compiled_reports": compiled}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/reports/compiled/{report_id}")
+def api_get_compiled_report_detail(report_id: str, user = Depends(get_current_user)):
+    try:
+        comp = get_compiled_report(user["id"], report_id)
+        if not comp:
+            raise HTTPException(status_code=404, detail="Compiled report not found.")
+        return {"success": True, "compiled_report": comp}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reports/compiled/{report_id}/retry")
+def api_retry_failed_report(report_id: str, user = Depends(get_current_user)):
+    try:
+        comp = get_compiled_report(user["id"], report_id)
+        if not comp:
+            raise HTTPException(status_code=404, detail="Compiled report not found.")
+            
+        # Re-trigger sending using same parameters
+        recipients = comp["recipients"].split(",") if comp["recipients"] else []
+        cc = comp["cc"].split(",") if comp["cc"] else None
+        bcc = comp["bcc"].split(",") if comp["bcc"] else None
+        
+        req = EmailSendRequest(
+            compiledReportId=report_id,
+            recipients=recipients,
+            cc=cc,
+            bcc=bcc,
+            subject=comp["subject"] or f"Retry: {comp['title']}",
+            body=comp["email_body"] or "",
+            format=comp["export_format"]
+        )
+        return api_send_compiled_report(req, user)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

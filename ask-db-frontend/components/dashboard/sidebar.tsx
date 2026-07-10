@@ -17,7 +17,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Plus
+  Plus,
+  Send
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -124,6 +125,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
     { href: '/dashboard/visualizations', label: 'Visualizations', icon: BarChart3 },
     { href: '/dashboard/history', label: 'Query History', icon: History },
     { href: '/dashboard/reports', label: 'Saved Reports', icon: FileText },
+    { href: '/dashboard/ship-reports', label: 'Ship Reports', icon: Send },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   ];
 
