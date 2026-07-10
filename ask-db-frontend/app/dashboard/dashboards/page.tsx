@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -64,7 +65,7 @@ export default function DashboardsPage() {
 
       try {
         // 1. Fetch KPIs
-        const kpiResponse = await fetch('http://localhost:8000/api/database/kpis', {
+        const kpiResponse = await fetch(`${API_BASE_URL}/api/database/kpis`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (kpiResponse.ok) {
@@ -73,7 +74,7 @@ export default function DashboardsPage() {
         }
 
         // 2. Fetch Charts
-        const chartResponse = await fetch('http://localhost:8000/api/database/dashboard-charts', {
+        const chartResponse = await fetch(`${API_BASE_URL}/api/database/dashboard-charts`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (chartResponse.ok) {

@@ -17,23 +17,22 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
 export const metadata: Metadata = {
   title: 'AskDB - AI-Powered SQL Assistant',
   description: 'Understand your database like never before with AI-powered natural language queries',
-  generator: 'v0.app',
   icons: {
     icon: [
       {
-        url: '/icon-light-32x32.png',
+        url: '/icon-light-32x32.png?v=2',
         media: '(prefers-color-scheme: light)',
       },
       {
-        url: '/icon-dark-32x32.png',
+        url: '/icon-dark-32x32.png?v=2',
         media: '(prefers-color-scheme: dark)',
       },
       {
-        url: '/icon.svg',
+        url: '/icon.svg?v=2',
         type: 'image/svg+xml',
       },
     ],
-    apple: '/apple-icon.png',
+    apple: '/apple-icon.png?v=2',
   },
 }
 

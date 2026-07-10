@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { ChatInput } from '@/components/dashboard/chat-input';
 import { ChatMessage } from '@/components/dashboard/chat-message';
@@ -98,7 +99,7 @@ export default function NewChatPage() {
       const activeChatId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       
       // Initialize the chat session in backend system DB
-      await fetch('http://localhost:8000/api/chats', {
+      await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -111,7 +112,7 @@ export default function NewChatPage() {
       });
 
       // 2. Fetch query results from Python FastAPI server
-      const response = await fetch('http://localhost:8000/api/query', {
+      const response = await fetch(`${API_BASE_URL}/api/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -132,7 +133,7 @@ export default function ShipReportsPage() {
       setLoading(true);
       
       // 1. Check DB connect status
-      const connRes = await fetch('http://localhost:8000/api/database/status', {
+      const connRes = await fetch(`${API_BASE_URL}/api/database/status`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (connRes.ok) {
@@ -141,7 +142,7 @@ export default function ShipReportsPage() {
       }
       
       // 2. Fetch saved reports
-      const reportsRes = await fetch('http://localhost:8000/api/reports', {
+      const reportsRes = await fetch(`${API_BASE_URL}/api/reports`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (reportsRes.ok) {
@@ -152,7 +153,7 @@ export default function ShipReportsPage() {
       }
       
       // 3. Fetch Gmail OAuth status
-      const gmailRes = await fetch('http://localhost:8000/api/reports/gmail/status', {
+      const gmailRes = await fetch(`${API_BASE_URL}/api/reports/gmail/status`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (gmailRes.ok) {
@@ -163,7 +164,7 @@ export default function ShipReportsPage() {
       }
 
       // 4. Fetch Shipment History
-      const historyRes = await fetch('http://localhost:8000/api/reports/compiled', {
+      const historyRes = await fetch(`${API_BASE_URL}/api/reports/compiled`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (historyRes.ok) {
@@ -189,7 +190,7 @@ export default function ShipReportsPage() {
     const token = localStorage.getItem('authToken');
     if (!token) return;
     // Redirect to backend auth trigger, passing user token to link accounts dynamically
-    window.location.href = `http://localhost:8000/api/auth/google/login?token=${token}`;
+    window.location.href = `${API_BASE_URL}/api/auth/google/login?token=${token}`;
   };
 
   // Disconnect Google Mailbox
@@ -202,7 +203,7 @@ export default function ShipReportsPage() {
     
     try {
       setDisconnecting(true);
-      const res = await fetch('http://localhost:8000/api/reports/gmail/disconnect', {
+      const res = await fetch(`${API_BASE_URL}/api/reports/gmail/disconnect`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -290,7 +291,7 @@ export default function ShipReportsPage() {
         }))
       };
       
-      const res = await fetch('http://localhost:8000/api/reports/compile', {
+      const res = await fetch(`${API_BASE_URL}/api/reports/compile`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -341,7 +342,7 @@ export default function ShipReportsPage() {
         findings: compiledData?.overall_findings || ''
       };
       
-      const res = await fetch('http://localhost:8000/api/reports/generate-email', {
+      const res = await fetch(`${API_BASE_URL}/api/reports/generate-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -396,7 +397,7 @@ export default function ShipReportsPage() {
         format: exportFormat
       };
       
-      const res = await fetch('http://localhost:8000/api/reports/send', {
+      const res = await fetch(`${API_BASE_URL}/api/reports/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -435,7 +436,7 @@ export default function ShipReportsPage() {
     setSendingState('sending');
     
     try {
-      const res = await fetch(`http://localhost:8000/api/reports/compiled/${reportId}/retry`, {
+      const res = await fetch(`${API_BASE_URL}/api/reports/compiled/${reportId}/retry`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

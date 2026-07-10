@@ -1,5 +1,4 @@
 google-generativeai
-sentence-transformers
 faiss-cpu
 sqlalchemy
 psycopg2-binary
@@ -9,3 +8,8 @@ matplotlib
 seaborn
 fastapi
 uvicorn
+litellm
+cryptography
+python-docx
+reportlab
+python-dotenv

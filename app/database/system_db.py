@@ -41,10 +41,22 @@ def init_db():
                 conn.execute(text(alter_syntax))
     
     # Dialect-specific types and syntax
-    pk_type = "INTEGER PRIMARY KEY AUTOINCREMENT" if dialect == "sqlite" else "INT AUTO_INCREMENT PRIMARY KEY"
-    ts_type = "DATETIME DEFAULT CURRENT_TIMESTAMP" if dialect == "sqlite" else "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
     text_type = "TEXT"
-    plot_type = "TEXT" if dialect == "sqlite" else "LONGTEXT"
+    if dialect == "sqlite":
+        pk_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
+        ts_type = "DATETIME DEFAULT CURRENT_TIMESTAMP"
+        plot_type = "TEXT"
+        datetime_type = "DATETIME"
+    elif dialect == "postgresql":
+        pk_type = "SERIAL PRIMARY KEY"
+        ts_type = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        plot_type = "TEXT"
+        datetime_type = "TIMESTAMP"
+    else:  # mysql
+        pk_type = "INT AUTO_INCREMENT PRIMARY KEY"
+        ts_type = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+        plot_type = "LONGTEXT"
+        datetime_type = "DATETIME"
     
     with engine.begin() as conn:
         # Create users table
@@ -64,7 +76,7 @@ def init_db():
             token VARCHAR(64) PRIMARY KEY,
             user_id INT NOT NULL,
             created_at {ts_type},
-            expires_at DATETIME NOT NULL
+            expires_at {datetime_type} NOT NULL
         )
         """))
         
@@ -79,8 +91,8 @@ def init_db():
             username VARCHAR(255),
             password VARCHAR(255),
             database_name VARCHAR(255),
-            ssl_enabled BOOLEAN DEFAULT 0,
-            is_active BOOLEAN DEFAULT 0,
+            ssl_enabled BOOLEAN DEFAULT FALSE,
+            is_active BOOLEAN DEFAULT FALSE,
             created_at {ts_type}
         )
         """))
@@ -132,7 +144,7 @@ def init_db():
             provider VARCHAR(50) NOT NULL,
             encrypted_api_key TEXT,
             model VARCHAR(100),
-            use_personal_key BOOLEAN DEFAULT 0,
+            use_personal_key BOOLEAN DEFAULT FALSE,
             created_at {ts_type},
             updated_at {ts_type}
         )
@@ -145,7 +157,7 @@ def init_db():
             email VARCHAR(255) NOT NULL,
             access_token TEXT NOT NULL,
             refresh_token TEXT,
-            expires_at DATETIME NOT NULL,
+            expires_at {datetime_type} NOT NULL,
             created_at {ts_type}
         )
         """))
@@ -169,7 +181,7 @@ def init_db():
             subject VARCHAR(255),
             email_body TEXT,
             delivery_status VARCHAR(20) NOT NULL DEFAULT 'Draft',
-            delivery_timestamp DATETIME,
+            delivery_timestamp {datetime_type},
             error_message TEXT,
             created_at {ts_type}
         )
@@ -195,6 +207,9 @@ def create_user(email: str, password: str) -> int:
         # Fetch inserted id
         if engine.name == "sqlite":
             return result.lastrowid
+        elif engine.name == "postgresql":
+            row = conn.execute(text("SELECT LASTVAL()")).fetchone()
+            return row[0] if row else None
         else:
             # For MySQL
             row = conn.execute(text("SELECT LAST_INSERT_ID()")).fetchone()
@@ -328,6 +343,9 @@ def add_user_connection(user_id: int, config: dict) -> int:
         
         if engine.name == "sqlite":
             return result.lastrowid
+        elif engine.name == "postgresql":
+            row = conn.execute(text("SELECT LASTVAL()")).fetchone()
+            return row[0] if row else None
         else:
             row = conn.execute(text("SELECT LAST_INSERT_ID()")).fetchone()
             return row[0] if row else None

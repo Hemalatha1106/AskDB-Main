@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -33,7 +34,7 @@ export default function QueryHistoryPage() {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/api/chats', {
+      const response = await fetch(`${API_BASE_URL}/api/chats`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },

@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -58,7 +59,7 @@ export default function VisualizationsPage() {
 
       try {
         // 1. Fetch Chat Visualizations
-        const response = await fetch('http://localhost:8000/api/database/visualizations', {
+        const response = await fetch(`${API_BASE_URL}/api/database/visualizations`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
@@ -69,7 +70,7 @@ export default function VisualizationsPage() {
         }
 
         // 2. Fetch Aggregate Database Charts
-        const chartResponse = await fetch('http://localhost:8000/api/database/dashboard-charts', {
+        const chartResponse = await fetch(`${API_BASE_URL}/api/database/dashboard-charts`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (chartResponse.ok) {

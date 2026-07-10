@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -70,7 +71,7 @@ export default function ConnectionsPage() {
     if (!token) return;
 
     try {
-      const response = await fetch('http://localhost:8000/api/database/schema', {
+      const response = await fetch(`${API_BASE_URL}/api/database/schema`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -103,7 +104,7 @@ export default function ConnectionsPage() {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/api/database/connections', {
+      const response = await fetch(`${API_BASE_URL}/api/database/connections`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -139,7 +140,7 @@ export default function ConnectionsPage() {
 
     setActionLoading(connId);
     try {
-      const response = await fetch(`http://localhost:8000/api/database/connections/${connId}/active`, {
+      const response = await fetch(`${API_BASE_URL}/api/database/connections/${connId}/active`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -167,7 +168,7 @@ export default function ConnectionsPage() {
     if (!confirm('Are you sure you want to delete this connection?')) return;
 
     try {
-      const response = await fetch(`http://localhost:8000/api/database/connections/${connId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/database/connections/${connId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,

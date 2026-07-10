@@ -1,26 +1,19 @@
 <svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    @media (prefers-color-scheme: light) {
-      .background { fill: black; }
-      .foreground { fill: white; }
-    }
-    @media (prefers-color-scheme: dark) {
-      .background { fill: white; }
-      .foreground { fill: black; }
-    }
-  </style>
-  <g clip-path="url(#clip0_7960_43945)">
-    <rect class="background" width="180" height="180" rx="37" />
-    <g style="transform: scale(95%); transform-origin: center">
-      <path class="foreground"
-        d="M101.141 53H136.632C151.023 53 162.689 64.6662 162.689 79.0573V112.904H148.112V79.0573C148.112 78.7105 148.098 78.3662 148.072 78.0251L112.581 112.898C112.701 112.902 112.821 112.904 112.941 112.904H148.112V126.672H112.941C98.5504 126.672 86.5638 114.891 86.5638 100.5V66.7434H101.141V100.5C101.141 101.15 101.191 101.792 101.289 102.422L137.56 66.7816C137.255 66.7563 136.945 66.7434 136.632 66.7434H101.141V53Z" />
-      <path class="foreground"
-        d="M65.2926 124.136L14 66.7372H34.6355L64.7495 100.436V66.7372H80.1365V118.47C80.1365 126.278 70.4953 129.958 65.2926 124.136Z" />
-    </g>
-  </g>
   <defs>
-    <clipPath id="clip0_7960_43945">
-      <rect width="180" height="180" fill="white" />
-    </clipPath>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
   </defs>
+  <!-- Background speech bubble shape -->
+  <path d="M90 20 C45.8 20 10 51.3 10 90 C10 109.7 20.2 127.3 36.8 139.7 L30 160 L52.8 152.4 C64.2 157.3 76.8 160 90 160 C134.2 160 170 128.7 170 90 C170 51.3 134.2 20 90 20 Z" fill="url(#bgGrad)" />
+  <!-- Database icon inside the speech bubble -->
+  <g fill="white">
+    <!-- Cylinder 1 -->
+    <ellipse cx="90" cy="65" rx="30" ry="10" />
+    <!-- Cylinder 2 -->
+    <path d="M60 82 C 60 87.5 73.4 92 90 92 C 106.6 92 120 87.5 120 82 V 72 C 120 77.5 106.6 82 90 82 C 73.4 82 60 77.5 60 72 Z" />
+    <!-- Cylinder 3 -->
+    <path d="M60 99 C 60 104.5 73.4 109 90 109 C 106.6 109 120 104.5 120 99 V 89 C 120 94.5 106.6 99 90 99 C 73.4 99 60 94.5 60 89 Z" />
+  </g>
 </svg>

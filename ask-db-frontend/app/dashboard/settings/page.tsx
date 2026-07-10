@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -73,7 +74,7 @@ export default function SettingsPage() {
     if (!token) return;
     setLoadingAiSettings(true);
     try {
-      const response = await fetch('http://localhost:8000/api/settings/ai', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/ai`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -149,7 +150,7 @@ export default function SettingsPage() {
 
     setSavingAiSettings(true);
     try {
-      const response = await fetch('http://localhost:8000/api/settings/ai', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/ai`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -188,7 +189,7 @@ export default function SettingsPage() {
     if (!token) return;
 
     try {
-      const response = await fetch('http://localhost:8000/api/settings/ai', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/ai`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`

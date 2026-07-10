@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { ChatMessage } from '@/components/dashboard/chat-message';
 import { ChatInput } from '@/components/dashboard/chat-input';
@@ -41,7 +42,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       }
       
       try {
-        const response = await fetch(`http://localhost:8000/api/chats/${id}`, {
+        const response = await fetch(`${API_BASE_URL}/api/chats/${id}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -92,7 +93,7 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       }
 
       // 2. Fetch from Python FastAPI server
-      const response = await fetch('http://localhost:8000/api/query', {
+      const response = await fetch(`${API_BASE_URL}/api/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

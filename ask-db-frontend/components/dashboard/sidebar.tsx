@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { AskDBLogo } from '@/components/ui/logo';
 import { Button } from '@/components/ui/button';
@@ -37,7 +38,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
     const token = localStorage.getItem('authToken');
     if (!token) return;
     try {
-      const response = await fetch('http://localhost:8000/api/settings/ai', {
+      const response = await fetch(`${API_BASE_URL}/api/settings/ai`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -66,7 +67,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       
       try {
         // Fetch chats
-        const chatsRes = await fetch('http://localhost:8000/api/chats', {
+        const chatsRes = await fetch(`${API_BASE_URL}/api/chats`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -81,7 +82,7 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
         }
         
         // Fetch connection status
-        const dbRes = await fetch('http://localhost:8000/api/database/status', {
+        const dbRes = await fetch(`${API_BASE_URL}/api/database/status`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }

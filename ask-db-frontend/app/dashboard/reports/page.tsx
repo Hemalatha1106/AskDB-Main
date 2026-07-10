@@ -1,4 +1,5 @@
 'use client';
+import { API_BASE_URL } from '@/lib/api-config';
 
 import { Button } from '@/components/ui/button';
 import { PremiumCard } from '@/components/ui/premium-card';
@@ -30,7 +31,7 @@ export default function ReportsPage() {
 
     try {
       // 1. Check connection status
-      const connRes = await fetch('http://localhost:8000/api/database/status', {
+      const connRes = await fetch(`${API_BASE_URL}/api/database/status`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -41,7 +42,7 @@ export default function ReportsPage() {
       }
 
       // 2. Fetch saved reports
-      const reportsRes = await fetch('http://localhost:8000/api/reports', {
+      const reportsRes = await fetch(`${API_BASE_URL}/api/reports`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -71,7 +72,7 @@ export default function ReportsPage() {
     if (!token) return;
 
     try {
-      const response = await fetch(`http://localhost:8000/api/reports/${reportId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/reports/${reportId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
