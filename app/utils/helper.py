@@ -20,4 +20,6 @@ def load_env(env_path=".env"):
                         val.startswith("'") and val.endswith("'")
                     ):
                         val = val[1:-1]
-                    os.environ[key] = val
+                    # Only set if not already present in system environment (prevents overwriting cloud/Render settings)
+                    if key not in os.environ:
+                        os.environ[key] = val
